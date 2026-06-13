@@ -7,107 +7,252 @@
     </div>
   </div>
 
-  <div class="metric-grid">
-    @for (metric of metrics; track metric.label) {
-      <article class="panel metric">
-        <mat-icon>{{ metric.icon }}</mat-icon>
-        <span>{{ metric.label }}</span>
-        <strong>{{ metric.value }}</strong>
-      </article>
-    }
-  </div>
-
-  <div class="content-grid two-columns">
-    <section class="panel">
-      <div class="panel-heading">
-        <h2>Column catalog</h2>
-        <span>Sample structure</span>
-      </div>
-      <table mat-table [dataSource]="columns">
-        <ng-container matColumnDef="name">
-          <th mat-header-cell *matHeaderCellDef>Column Name</th>
-          <td mat-cell *matCellDef="let column">{{ column.name }}</td>
-        </ng-container>
-        <ng-container matColumnDef="type">
-          <th mat-header-cell *matHeaderCellDef>Data Type</th>
-          <td mat-cell *matCellDef="let column">{{ column.type }}</td>
-        </ng-container>
-        <ng-container matColumnDef="distinct">
-          <th mat-header-cell *matHeaderCellDef>Distinct Count</th>
-          <td mat-cell *matCellDef="let column">{{ column.distinct }}</td>
-        </ng-container>
-        <ng-container matColumnDef="nulls">
-          <th mat-header-cell *matHeaderCellDef>Null Count</th>
-          <td mat-cell *matCellDef="let column">{{ column.nulls }}</td>
-        </ng-container>
-        <ng-container matColumnDef="quality">
-          <th mat-header-cell *matHeaderCellDef>Populated</th>
-          <td mat-cell *matCellDef="let column">
-            <span class="quality-value">{{ column.quality }}</span>
-          </td>
-        </ng-container>
-        <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
-        <tr mat-row *matRowDef="let row; columns: displayedColumns"></tr>
-      </table>
+  @if (errorMessage()) {
+    <section class="panel empty-project-state">
+      <mat-icon>info</mat-icon>
+      <h2>Dataset statistics unavailable</h2>
+      <p>{{ errorMessage() }}</p>
     </section>
+  } @else {
+    <div class="metric-grid">
+      @for (metric of metrics(); track metric.label) {
+        <article class="panel metric">
+          <mat-icon>{{ metric.icon }}</mat-icon>
+          <span>{{ metric.label }}</span>
+          <strong>{{ metric.value }}</strong>
+        </article>
+      }
+    </div>
 
-    <section class="panel insight-panel">
-      <div class="panel-heading">
-        <h2>Selected column</h2>
-        <span>{{ selectedColumn.name }} · {{ selectedColumn.type }}</span>
-      </div>
-
-      <div class="column-stats-grid">
-        <div>
-          <span>Distinct Values</span>
-          <strong>{{ selectedColumn.distinctValues }}</strong>
-        </div>
-        <div>
-          <span>Null Count</span>
-          <strong>{{ selectedColumn.nullCount }}</strong>
-        </div>
-        <div>
-          <span>Min</span>
-          <strong>{{ selectedColumn.min }}</strong>
-        </div>
-        <div>
-          <span>Max</span>
-          <strong>{{ selectedColumn.max }}</strong>
-        </div>
-        <div>
-          <span>Average</span>
-          <strong>{{ selectedColumn.average }}</strong>
-        </div>
-        <div>
-          <span>Sum</span>
-          <strong>{{ selectedColumn.sum }}</strong>
-        </div>
-      </div>
-
-      <div class="selected-column-section">
-        <h3>Top Values</h3>
-        <div class="top-values-list">
-          @for (item of selectedColumn.topValues; track item.value) {
-            <div>
-              <span>{{ item.value }}</span>
-              <strong>{{ item.count }}</strong>
-            </div>
+    <div class="content-grid two-columns">
+      <section class="panel">
+        <div class="panel-heading">
+          <h2>Column catalog</h2>
+          @if (isOverviewLoading()) {
+            <span>Calculating metadata</span>
+          } @else {
+            <span>{{ formatNumber(overview()?.columns?.length ?? 0) }} columns</span>
           }
         </div>
-      </div>
 
-      <div class="selected-column-section">
-        <h3>Distribution</h3>
-        <div class="distribution-list">
-          @for (item of selectedColumn.distribution; track item.label) {
-            <div>
-              <span>{{ item.label }}</span>
-              <div class="distribution-track"><span [style.width]="item.value"></span></div>
-              <strong>{{ item.value }}</strong>
-            </div>
+        @if (isOverviewLoading()) {
+          <div class="loading-state">
+            <mat-spinner diameter="34"></mat-spinner>
+            <span>Calculating dataset metadata...</span>
+          </div>
+        } @else {
+          <table mat-table [dataSource]="overview()?.columns ?? []">
+            <ng-container matColumnDef="name">
+              <th mat-header-cell *matHeaderCellDef>Column Name</th>
+              <td mat-cell *matCellDef="let column">{{ column.name }}</td>
+            </ng-container>
+            <ng-container matColumnDef="type">
+              <th mat-header-cell *matHeaderCellDef>Data Type</th>
+              <td mat-cell *matCellDef="let column">{{ column.type }}</td>
+            </ng-container>
+            <ng-container matColumnDef="category">
+              <th mat-header-cell *matHeaderCellDef>Category</th>
+              <td mat-cell *matCellDef="let column">{{ column.category }}</td>
+            </ng-container>
+            <ng-container matColumnDef="distinct">
+              <th mat-header-cell *matHeaderCellDef>Distinct Count</th>
+              <td mat-cell *matCellDef="let column">{{ formatNumber(column.distinctCount) }}</td>
+            </ng-container>
+            <ng-container matColumnDef="nulls">
+              <th mat-header-cell *matHeaderCellDef>Null Count</th>
+              <td mat-cell *matCellDef="let column">{{ formatNumber(column.nullCount) }}</td>
+            </ng-container>
+            <ng-container matColumnDef="quality">
+              <th mat-header-cell *matHeaderCellDef>Populated</th>
+              <td mat-cell *matCellDef="let column">
+                <span class="quality-value">{{ formatPercentage(column.populatedPercentage) }}</span>
+              </td>
+            </ng-container>
+            <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+            <tr
+              mat-row
+              *matRowDef="let row; columns: displayedColumns"
+              class="clickable-table-row"
+              [class.selected]="isSelected(row)"
+              (click)="selectColumn(row)"
+            ></tr>
+          </table>
+        }
+      </section>
+
+      <section class="panel insight-panel">
+        <div class="panel-heading">
+          <h2>Selected column</h2>
+          @if (selectedColumn(); as column) {
+            <span>{{ column.name }} | {{ column.type }} | {{ column.category }}</span>
+          } @else {
+            <span>Select a column</span>
           }
         </div>
-      </div>
-    </section>
-  </div>
+
+        @if (isColumnLoading()) {
+          <div class="loading-state">
+            <mat-spinner diameter="34"></mat-spinner>
+            <span>Calculating column statistics...</span>
+          </div>
+        } @else if (selectedColumn(); as column) {
+          <div class="column-stats-grid">
+            <div>
+              <span>Distinct Values</span>
+              <strong>{{ formatNumber(column.distinctValues) }}</strong>
+            </div>
+            <div>
+              <span>Null Count</span>
+              <strong>{{ formatNumber(column.nullCount) }}</strong>
+            </div>
+
+            @if (column.category === 'Measure') {
+              <div>
+                <span>Min</span>
+                <strong>{{ formatDecimal(column.min) }}</strong>
+              </div>
+              <div>
+                <span>Max</span>
+                <strong>{{ formatDecimal(column.max) }}</strong>
+              </div>
+              <div>
+                <span>Average</span>
+                <strong>{{ formatDecimal(column.average) }}</strong>
+              </div>
+              <div>
+                <span>Median</span>
+                <strong>{{ formatDecimal(column.median) }}</strong>
+              </div>
+              <div>
+                <span>Sum</span>
+                <strong>{{ formatDecimal(column.sum) }}</strong>
+              </div>
+              <div>
+                <span>Standard Deviation</span>
+                <strong>{{ formatDecimal(column.standardDeviation) }}</strong>
+              </div>
+            }
+
+            @if (column.category === 'Identifier') {
+              <div>
+                <span>Unique Percentage</span>
+                <strong>{{ formatPercentage(column.uniquePercentage) }}</strong>
+              </div>
+              <div>
+                <span>Duplicate Percentage</span>
+                <strong>{{ formatPercentage(column.duplicatePercentage) }}</strong>
+              </div>
+            }
+
+            @if (column.category === 'Date') {
+              <div>
+                <span>Earliest Date</span>
+                <strong>{{ column.earliestDate ?? '-' }}</strong>
+              </div>
+              <div>
+                <span>Latest Date</span>
+                <strong>{{ column.latestDate ?? '-' }}</strong>
+              </div>
+              <div>
+                <span>Date Range</span>
+                <strong>{{ column.dateRange ?? '-' }}</strong>
+              </div>
+              <div>
+                <span>Most Active Month</span>
+                <strong>{{ column.mostActiveMonth ?? '-' }}</strong>
+              </div>
+              <div>
+                <span>Most Active Year</span>
+                <strong>{{ column.mostActiveYear ?? '-' }}</strong>
+              </div>
+            }
+          </div>
+
+          <div class="selected-column-section">
+            <h3>
+              @if (column.category === 'Identifier') {
+                Most Frequent IDs
+              } @else if (column.category === 'Text') {
+                Most Common Values
+              } @else {
+                Top Values
+              }
+            </h3>
+            <div class="top-values-list">
+              @for (
+                item of column.mostFrequentIds ?? column.topFrequencies ?? column.topValues;
+                track item.value
+              ) {
+                <div>
+                  <span>{{ item.value }}</span>
+                  <strong>
+                    {{ formatNumber(item.count) }}
+                    @if (item.percentage !== undefined) {
+                      ({{ formatPercentage(item.percentage) }})
+                    }
+                  </strong>
+                </div>
+              }
+            </div>
+          </div>
+
+          @if (column.category === 'Text' && column.topFrequencies?.length) {
+            <div class="selected-column-section">
+              <h3>Frequency Distribution</h3>
+              <div class="distribution-list">
+                @for (item of column.topFrequencies; track item.value) {
+                  <div>
+                    <span>{{ item.value }}</span>
+                    <div class="distribution-track">
+                      <span [style.width.%]="item.percentage ?? 0"></span>
+                    </div>
+                    <strong>{{ formatPercentage(item.percentage) }}</strong>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          @if (column.category === 'Measure' && column.distribution?.length) {
+            <div class="selected-column-section">
+              <h3>Distribution</h3>
+              <div class="distribution-list">
+                @for (item of column.distribution; track item.label) {
+                  <div>
+                    <span>{{ item.label }}</span>
+                    <div class="distribution-track">
+                      <span [style.width.%]="item.percentage"></span>
+                    </div>
+                    <strong>{{ formatPercentage(item.percentage) }}</strong>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          @if (column.category === 'Date' && column.timelineDistribution?.length) {
+            <div class="selected-column-section">
+              <h3>Timeline Distribution</h3>
+              <div class="distribution-list">
+                @for (item of column.timelineDistribution; track item.label) {
+                  <div>
+                    <span>{{ item.label }}</span>
+                    <div class="distribution-track">
+                      <span [style.width.%]="item.percentage"></span>
+                    </div>
+                    <strong>{{ formatPercentage(item.percentage) }}</strong>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        } @else {
+          <div class="loading-state">
+            <mat-icon>table_chart</mat-icon>
+            <span>Select a column to calculate statistics.</span>
+          </div>
+        }
+      </section>
+    </div>
+  }
 </section>

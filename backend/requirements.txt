@@ -3,3 +3,5 @@ uvicorn[standard]
 duckdb
 pandas
 openpyxl
+python-calamine
+python-multipart

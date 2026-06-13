@@ -20,13 +20,19 @@ import { Project, ProjectSelection } from '../../core/project-selection';
           <input #projectName matInput [value]="project.name" placeholder="Enter project name" />
         </mat-form-field>
       </label>
+      @if (isDuplicateProjectName(projectName.value)) {
+        <p class="dialog-error">
+          A project with this name already exists.<br />
+          Please choose a different project name.
+        </p>
+      }
     </mat-dialog-content>
     <mat-dialog-actions align="end">
       <button mat-button type="button" mat-dialog-close>Cancel</button>
       <button
         mat-flat-button
         type="button"
-        [disabled]="projectName.value.trim().length === 0"
+        [disabled]="projectName.value.trim().length === 0 || isDuplicateProjectName(projectName.value)"
         [mat-dialog-close]="projectName.value.trim()"
       >
         Save
@@ -36,6 +42,11 @@ import { Project, ProjectSelection } from '../../core/project-selection';
 })
 export class RenameProjectDialog {
   protected readonly project = inject<Project>(MAT_DIALOG_DATA);
+  private readonly projectSelection = inject(ProjectSelection);
+
+  protected isDuplicateProjectName(projectName: string): boolean {
+    return this.projectSelection.isProjectNameTaken(projectName, this.project.id);
+  }
 }
 
 @Component({
@@ -67,7 +78,13 @@ export class Projects {
   protected readonly projects = this.projectSelection.projects;
 
   protected openProject(project: Project): void {
+    if (project.state === 'Draft') {
+      this.router.navigate(['/projects/create', project.id]);
+      return;
+    }
+
     this.projectSelection.selectProject(project);
+    this.router.navigate(['/project/overview']);
   }
 
   protected renameProject(event: MouseEvent, project: Project): void {
@@ -85,7 +102,9 @@ export class Projects {
           return;
         }
 
-        this.projectSelection.renameProject(project.id, projectName);
+        if (!this.projectSelection.isProjectNameTaken(projectName, project.id)) {
+          this.projectSelection.renameProject(project.id, projectName);
+        }
       });
   }
 

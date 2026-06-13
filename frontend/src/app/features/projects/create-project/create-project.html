@@ -3,30 +3,47 @@
     <div>
       <p class="eyebrow">Projects</p>
       <h1>Create project</h1>
-      <p class="lede">Create a local analytics workspace. This wizard uses static mock data.</p>
+      <p class="lede">Create a local analytics workspace from CSV or XLSX files.</p>
     </div>
   </div>
 
   <section class="panel create-wizard-panel">
-    <mat-stepper class="create-stepper" [linear]="false" #stepper>
+    <mat-stepper
+      class="create-stepper"
+      [linear]="false"
+      [selectedIndex]="currentStep"
+      (selectedIndexChange)="onStepperIndexChange($event)"
+    >
       <mat-step label="Project Info" [editable]="false">
         <div class="wizard-step-content">
           <div class="wizard-form">
             <label class="fixed-field">
               <span>Project Name</span>
               <mat-form-field appearance="outline">
-                <input #projectName matInput placeholder="Enter project name" />
+                <input
+                  matInput
+                  name="projectName"
+                  placeholder="Enter project name"
+                  [(ngModel)]="projectName"
+                />
               </mat-form-field>
+              @if (projectNameValidationMessage) {
+                <span class="field-error">
+                  A project with this name already exists.<br />
+                  Please choose a different project name.
+                </span>
+              }
             </label>
 
             <label class="fixed-field">
               <span>Description</span>
               <mat-form-field appearance="outline">
                 <textarea
-                  #description
                   matInput
+                  name="description"
                   rows="5"
                   placeholder="Describe the purpose of this analytics project"
+                  [(ngModel)]="description"
                 ></textarea>
               </mat-form-field>
             </label>
@@ -45,8 +62,8 @@
           <button
             mat-flat-button
             type="button"
-            [disabled]="!isProjectInfoValid(projectName.value, description.value)"
-            (click)="stepper.selectedIndex = 1"
+            [disabled]="!isProjectInfoValid(projectName, description)"
+            (click)="goToStep(1)"
           >
             Continue
           </button>
@@ -63,19 +80,30 @@
                 (click)="selectImportMethod('files')"
               >
                 <mat-radio-button value="files">Select Files</mat-radio-button>
-                <p>Choose individual CSV or XLSX files for this project.</p>
+                <p>Choose one or more files. All selected files must match the selected type.</p>
 
                 <label class="fixed-field compact">
                   <span>File Type</span>
                   <mat-form-field appearance="outline">
-                    <mat-select value="CSV">
+                    <mat-select
+                      [value]="selectedFileType"
+                      (selectionChange)="selectFileType($event.value)"
+                    >
                       <mat-option value="CSV">CSV</mat-option>
                       <mat-option value="XLSX">XLSX</mat-option>
                     </mat-select>
                   </mat-form-field>
                 </label>
 
-                <button mat-stroked-button type="button">
+                <input
+                  #fileInput
+                  type="file"
+                  multiple
+                  hidden
+                  [attr.accept]="fileAccept"
+                  (change)="onFilesSelected($event)"
+                />
+                <button mat-stroked-button type="button" (click)="fileInput.click()">
                   <mat-icon>upload_file</mat-icon>
                   Select Files
                 </button>
@@ -87,43 +115,91 @@
                 (click)="selectImportMethod('folder')"
               >
                 <mat-radio-button value="folder">Select Folder</mat-radio-button>
-                <p>All supported files inside the selected folder will later be imported automatically.</p>
+                <p>
+                  The backend validates all selected folder files. Mixed CSV and XLSX folders are rejected.
+                </p>
 
-                <button mat-stroked-button type="button">
+                <input
+                  #folderInput
+                  type="file"
+                  multiple
+                  hidden
+                  webkitdirectory
+                  (change)="onFolderSelected($event)"
+                />
+                <button mat-stroked-button type="button" (click)="folderInput.click()">
                   <mat-icon>drive_folder_upload</mat-icon>
                   Select Folder
                 </button>
               </label>
             </mat-radio-group>
+
+            @if (validationError) {
+              <div class="wizard-error">
+                <mat-icon>error</mat-icon>
+                <span>{{ validationError }}</span>
+              </div>
+            }
           </div>
 
           <aside class="wizard-context">
             <mat-icon>folder_open</mat-icon>
-            <h2>Mock selection</h2>
-            <div class="mock-file-list">
-              @for (file of mockFiles; track file.name) {
-                <div>
-                  <span>{{ file.name }}</span>
-                  <strong>{{ file.size }}</strong>
+            <h2>Selected data</h2>
+
+            @if (importMethod === 'files') {
+              @if (selectedFiles.length > 0) {
+                <div class="mock-file-list">
+                  @for (file of selectedFiles; track file.name + file.size + file.lastModified) {
+                    <div>
+                      <span>{{ file.name }}</span>
+                      <strong>{{ formatSize(file.size) }}</strong>
+                      <em>Selected</em>
+                      <button mat-button type="button" (click)="removeSelectedFile(file)">Remove</button>
+                    </div>
+                  }
                 </div>
+              } @else {
+                <p>No files selected yet.</p>
               }
-            </div>
-            <div class="selected-folder-path">
-              <span>Selected folder</span>
-              <strong>{{ selectedFolder }}</strong>
-            </div>
+            } @else {
+              @if (selectedFolderFiles.length > 0) {
+                <div class="selected-folder-path">
+                  <span>Selected folder</span>
+                  <strong>{{ selectedFolderPath }}</strong>
+                </div>
+                <div class="mock-file-list">
+                  @for (file of selectedFolderFiles.slice(0, 6); track file.name + file.size + file.lastModified) {
+                    <div>
+                      <span>{{ file.name }}</span>
+                      <strong>{{ formatSize(file.size) }}</strong>
+                      <em>Selected</em>
+                      <button mat-button type="button" (click)="removeSelectedFolderFile(file)">Remove</button>
+                    </div>
+                  }
+                </div>
+              } @else {
+                <p>No folder selected yet.</p>
+              }
+            }
           </aside>
         </div>
 
         <div class="wizard-actions">
-          <button mat-button type="button" (click)="stepper.selectedIndex = 0">Back</button>
+          <button mat-button type="button" [disabled]="isValidating" (click)="previousStep()">
+            Back
+          </button>
           <button
             mat-flat-button
             type="button"
-            [disabled]="!hasMockDataSelection"
-            (click)="stepper.selectedIndex = 2"
+            [disabled]="!hasDataSelection || isValidating"
+            (click)="validateDataSelection()"
           >
-            Continue
+            @if (isValidating) {
+              <mat-spinner diameter="18"></mat-spinner>
+              Validating
+            } @else {
+              Continue
+            }
           </button>
         </div>
       </mat-step>
@@ -133,25 +209,62 @@
           <section class="schema-preview">
             <div class="panel-heading">
               <h2>Detected columns</h2>
-              <span>Static preview</span>
+              <span>{{ importPreview?.columnCount ?? 0 }} columns</span>
             </div>
-            <p class="wizard-note">Schema information shown below is currently mock data.</p>
-            <div class="schema-preview-row header">
-              <span>Column</span>
+            <p class="wizard-note">Schema information was detected from the selected files.</p>
+
+            <div class="schema-preview-row schema-preview-header">
+              <span>Column Name</span>
               <span>Detected Type</span>
+              <span>Source Files</span>
+              <span>Nullability</span>
+              <span>Example Value</span>
             </div>
-            @for (column of schemaColumns; track column.name) {
-              <div class="schema-preview-row">
+            @for (column of importPreview?.schema ?? []; track column.name) {
+              <div class="schema-preview-row schema-preview-data-row">
                 <span>{{ column.name }}</span>
                 <strong>{{ column.type }}</strong>
+                <span>{{ column.sourceFiles.length }} files</span>
+                <span>{{ column.nullable ? 'Nullable' : 'Required' }}</span>
+                <span>{{ formatCellValue(column.exampleValue) }}</span>
               </div>
             }
+          </section>
+
+          <section class="schema-preview">
+            <div class="panel-heading">
+              <h2>Dataset preview</h2>
+              <span>First {{ importPreview?.preview?.rows?.length ?? 0 }} rows</span>
+            </div>
+
+            <div class="wizard-dataset-preview">
+              <table>
+                <thead>
+                  <tr>
+                    @for (column of importPreview?.preview?.columns ?? []; track column) {
+                      <th>{{ column }}</th>
+                    }
+                  </tr>
+                </thead>
+                <tbody>
+                  @for (row of importPreview?.preview?.rows ?? []; track $index) {
+                    <tr>
+                      @for (column of importPreview?.preview?.columns ?? []; track column) {
+                        <td>{{ formatCellValue(row[column]) }}</td>
+                      }
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
           </section>
         </div>
 
         <div class="wizard-actions">
-          <button mat-button type="button" (click)="stepper.selectedIndex = 1">Back</button>
-          <button mat-flat-button type="button" (click)="stepper.selectedIndex = 3">Continue</button>
+          <button mat-button type="button" (click)="previousStep()">Back</button>
+          <button mat-flat-button type="button" [disabled]="!importPreview" (click)="goToStep(3)">
+            Continue
+          </button>
         </div>
       </mat-step>
 
@@ -159,27 +272,41 @@
         <div class="wizard-step-content">
           <section class="import-summary">
             <h2>Import summary</h2>
-            <p class="wizard-note">Import summary shown below is currently mock data.</p>
-            <div><span>Project Name</span><strong>{{ projectName.value || 'New analytics project' }}</strong></div>
-            <div><span>Selected Files</span><strong>3 files</strong></div>
-            <div><span>Detected Columns</span><strong>5 columns</strong></div>
-            <div><span>Estimated Rows</span><strong>42,831,904</strong></div>
+            <p class="wizard-note">This project will be created from the validated dataset.</p>
+            <div><span>Project Name</span><strong>{{ projectName || 'New analytics project' }}</strong></div>
+            <div><span>Number of Files</span><strong>{{ importPreview?.fileCount ?? 0 }} files</strong></div>
+            <div><span>Detected Columns</span><strong>{{ importPreview?.columnCount ?? 0 }} columns</strong></div>
+            <div><span>Estimated Rows</span><strong>{{ (importPreview?.rowCount ?? 0).toLocaleString() }}</strong></div>
+            <div><span>Dataset Type</span><strong>{{ importPreview?.datasetType ?? '-' }}</strong></div>
           </section>
 
           <aside class="wizard-context">
             <mat-icon>check_circle</mat-icon>
             <h2>Ready to create</h2>
-            <p>No files will be imported in this prototype. This step only represents the final workflow.</p>
+            <p>
+              The dataset is loaded in memory for this prototype. DuckDB persistence will be connected later.
+            </p>
+
+            @if (importPreview?.files?.length) {
+              <div class="mock-file-list">
+                @for (file of importPreview?.files ?? []; track file.name) {
+                  <div>
+                    <span>{{ file.name }}</span>
+                    <strong>{{ file.status }}</strong>
+                  </div>
+                }
+              </div>
+            }
           </aside>
         </div>
 
         <div class="wizard-actions">
-          <button mat-button type="button" (click)="stepper.selectedIndex = 2">Back</button>
+          <button mat-button type="button" (click)="previousStep()">Back</button>
           <button
             mat-flat-button
             type="button"
-            [disabled]="!isProjectInfoValid(projectName.value, description.value) || !hasMockDataSelection"
-            (click)="createProject(projectName.value, description.value)"
+            [disabled]="!isProjectInfoValid(projectName, description) || !importPreview"
+            (click)="createProject()"
           >
             Create Project
           </button>

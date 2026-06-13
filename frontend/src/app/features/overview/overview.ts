@@ -1,50 +1,149 @@
-import { Component } from '@angular/core';
+import { Component, OnInit, computed, inject, signal } from '@angular/core';
 import { MatIconModule } from '@angular/material/icon';
+import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatTableModule } from '@angular/material/table';
+
+import { ImportApi } from '../../core/import-api';
+import { ColumnProfile, DatasetOverview, OverviewColumn } from '../../core/import-workflow.models';
+import { ProjectSelection } from '../../core/project-selection';
 
 @Component({
   selector: 'app-overview',
-  imports: [MatIconModule, MatTableModule],
+  imports: [MatIconModule, MatProgressSpinnerModule, MatTableModule],
   templateUrl: './overview.html',
 })
-export class Overview {
-  protected readonly metrics = [
-    { label: 'Total Rows', value: '42,831,904', icon: 'format_list_numbered' },
-    { label: 'Total Columns', value: '286', icon: 'view_column' },
-    { label: 'Imported Files', value: '18', icon: 'upload_file' },
-    { label: 'Dataset Size', value: '37.4 GB', icon: 'database' },
-  ];
+export class Overview implements OnInit {
+  private readonly importApi = inject(ImportApi);
+  protected readonly projectSelection = inject(ProjectSelection);
 
-  protected readonly columns = [
-    { name: 'CompanyCode', type: 'Text', distinct: '18', nulls: '0', quality: '100%' },
-    { name: 'PostingDate', type: 'Date', distinct: '1,826', nulls: '0', quality: '100%' },
-    { name: 'AmountLocal', type: 'Decimal', distinct: '2,418,902', nulls: '12', quality: '99.99%' },
-    { name: 'AccountNumber', type: 'Text', distinct: '3,492', nulls: '0', quality: '100%' },
-    { name: 'CostCenter', type: 'Text', distinct: '1,204', nulls: '84,219', quality: '98.72%' },
-    { name: 'Currency', type: 'Text', distinct: '27', nulls: '0', quality: '100%' },
-  ];
+  protected readonly overview = signal<DatasetOverview | null>(null);
+  protected readonly selectedColumn = signal<ColumnProfile | null>(null);
+  protected readonly selectedColumnName = signal<string | null>(null);
+  protected readonly isOverviewLoading = signal(false);
+  protected readonly isColumnLoading = signal(false);
+  protected readonly errorMessage = signal('');
 
-  protected readonly displayedColumns = ['name', 'type', 'distinct', 'nulls', 'quality'];
+  protected readonly displayedColumns = ['name', 'type', 'category', 'distinct', 'nulls', 'quality'];
 
-  protected readonly selectedColumn = {
-    name: 'AmountLocal',
-    type: 'Decimal',
-    distinctValues: '2,418,902',
-    nullCount: '12',
-    min: '-982,441.18',
-    max: '4,850,000.00',
-    average: '42,501.22',
-    sum: '1,820,441,903,284.17',
-    topValues: [
-      { value: '0.00', count: '1,284,904' },
-      { value: '125.00', count: '412,880' },
-      { value: '1,200.50', count: '287,119' },
-    ],
-    distribution: [
-      { label: '< 0', value: '18%' },
-      { label: '0 - 10k', value: '46%' },
-      { label: '10k - 100k', value: '28%' },
-      { label: '> 100k', value: '8%' },
-    ],
-  };
+  protected readonly metrics = computed(() => {
+    const summary = this.overview()?.summary;
+    return [
+      {
+        label: 'Total Rows',
+        value: summary ? this.formatNumber(summary.totalRows) : '-',
+        icon: 'format_list_numbered',
+      },
+      {
+        label: 'Total Columns',
+        value: summary ? this.formatNumber(summary.totalColumns) : '-',
+        icon: 'view_column',
+      },
+      {
+        label: 'Imported Files',
+        value: summary ? this.formatNumber(summary.importedFiles) : '-',
+        icon: 'upload_file',
+      },
+      {
+        label: 'Dataset Size',
+        value: summary ? this.formatBytes(summary.datasetSize) : '-',
+        icon: 'database',
+      },
+    ];
+  });
+
+  ngOnInit(): void {
+    const datasetId = this.projectSelection.activeProject()?.datasetMetadata?.datasetId;
+    if (!datasetId) {
+      this.errorMessage.set('Open a project created from uploaded files to view dataset statistics.');
+      return;
+    }
+
+    this.isOverviewLoading.set(true);
+    this.errorMessage.set('');
+
+    this.importApi.getDatasetOverview(datasetId).subscribe({
+      next: (overview) => {
+        this.overview.set(overview);
+        this.isOverviewLoading.set(false);
+
+        const firstColumn = overview.columns[0];
+        if (firstColumn) {
+          this.selectColumn(firstColumn);
+        }
+      },
+      error: () => {
+        this.isOverviewLoading.set(false);
+        this.errorMessage.set('Dataset overview could not be loaded.');
+      },
+    });
+  }
+
+  protected selectColumn(column: OverviewColumn): void {
+    const datasetId = this.overview()?.datasetId;
+    if (!datasetId) {
+      return;
+    }
+
+    this.selectedColumnName.set(column.name);
+    this.isColumnLoading.set(true);
+    this.importApi.getColumnProfile(datasetId, column.name).subscribe({
+      next: (profile) => {
+        this.selectedColumn.set(profile);
+        this.isColumnLoading.set(false);
+      },
+      error: () => {
+        this.selectedColumn.set(null);
+        this.isColumnLoading.set(false);
+        this.errorMessage.set(`Statistics for ${column.name} could not be loaded.`);
+      },
+    });
+  }
+
+  protected isSelected(column: OverviewColumn): boolean {
+    return this.selectedColumnName() === column.name;
+  }
+
+  protected formatNumber(value: number | null | undefined): string {
+    if (value === null || value === undefined) {
+      return '-';
+    }
+
+    return value.toLocaleString();
+  }
+
+  protected formatDecimal(value: number | null | undefined): string {
+    if (value === null || value === undefined) {
+      return '-';
+    }
+
+    return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+  }
+
+  protected formatPercentage(value: number | null | undefined): string {
+    if (value === null || value === undefined) {
+      return '-';
+    }
+
+    return `${value.toLocaleString(undefined, { maximumFractionDigits: 2 })}%`;
+  }
+
+  protected formatBytes(value: number | null | undefined): string {
+    if (value === null || value === undefined) {
+      return '-';
+    }
+
+    if (value < 1024) {
+      return `${value} B`;
+    }
+
+    if (value < 1024 * 1024) {
+      return `${(value / 1024).toFixed(1)} KB`;
+    }
+
+    if (value < 1024 * 1024 * 1024) {
+      return `${(value / (1024 * 1024)).toFixed(1)} MB`;
+    }
+
+    return `${(value / (1024 * 1024 * 1024)).toFixed(2)} GB`;
+  }
 }

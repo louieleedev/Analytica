@@ -6,6 +6,7 @@ import { Explorer } from './features/explorer/explorer';
 import { Overview } from './features/overview/overview';
 import { Pivot } from './features/pivot/pivot';
 import { CreateProject } from './features/projects/create-project/create-project';
+import { canDeactivateCreateProject } from './features/projects/create-project/create-project.guard';
 import { Projects } from './features/projects/projects';
 import { Reports } from './features/reports/reports';
 import { Settings } from './features/settings/settings';
@@ -17,7 +18,18 @@ export const routes: Routes = [
     component: AppShell,
     children: [
       { path: 'projects', component: Projects, title: 'Projects | Analytica' },
-      { path: 'projects/create', component: CreateProject, title: 'Create Project | Analytica' },
+      {
+        path: 'projects/create',
+        component: CreateProject,
+        title: 'Create Project | Analytica',
+        canDeactivate: [canDeactivateCreateProject],
+      },
+      {
+        path: 'projects/create/:draftId',
+        component: CreateProject,
+        title: 'Create Project | Analytica',
+        canDeactivate: [canDeactivateCreateProject],
+      },
       { path: 'project/overview', component: Overview, title: 'Overview | Analytica' },
       { path: 'project/datasets', component: Datasets, title: 'Datasets | Analytica' },
       { path: 'project/explorer', component: Explorer, title: 'Explorer | Analytica' },

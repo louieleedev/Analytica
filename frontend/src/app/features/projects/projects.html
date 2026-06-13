@@ -26,7 +26,6 @@
       @for (project of projects(); track project.id) {
         <article
           class="panel project-card"
-          routerLink="/project/overview"
           tabindex="0"
           role="link"
           (click)="openProject(project)"
@@ -36,7 +35,7 @@
             <mat-icon>folder_open</mat-icon>
             <span class="status-badge" [class]="project.tone">
               <span></span>
-              {{ project.status }}
+              {{ project.state === 'Draft' ? 'Draft' : project.status }}
             </span>
           </div>
           <h2>{{ project.name }}</h2>
