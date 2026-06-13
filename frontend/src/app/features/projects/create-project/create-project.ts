@@ -163,7 +163,15 @@ export class CreateProject implements OnInit, AfterViewInit {
   }
 
   protected goToStep(step: number): void {
-    this.setCurrentStep(step, 'Continue clicked');
+    const currentStep = this.stepper?.selectedIndex ?? this.currentStep;
+
+    console.info('Continue clicked', {
+      currentStep,
+      targetStep: step,
+      wizardState: this.createLoggableWizardState(),
+    });
+
+    this.setCurrentStep(step, 'Continue clicked', currentStep);
   }
 
   protected previousStep(): void {

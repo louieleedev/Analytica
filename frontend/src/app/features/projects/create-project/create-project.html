@@ -14,7 +14,7 @@
       [selectedIndex]="currentStep"
       (selectedIndexChange)="onStepperIndexChange($event)"
     >
-      <mat-step label="Project Info" [editable]="false">
+      <mat-step label="Project Info" [editable]="true">
         <div class="wizard-step-content">
           <div class="wizard-form">
             <label class="fixed-field">
@@ -70,7 +70,7 @@
         </div>
       </mat-step>
 
-      <mat-step label="Data Selection" [editable]="false">
+      <mat-step label="Data Selection" [editable]="true">
         <div class="wizard-step-content">
           <div class="data-source-options">
             <mat-radio-group [value]="importMethod" aria-label="Import method">
@@ -204,7 +204,7 @@
         </div>
       </mat-step>
 
-      <mat-step label="Schema Preview" [editable]="false">
+      <mat-step label="Schema Preview" [editable]="true">
         <div class="wizard-step-content single-column">
           <section class="schema-preview">
             <div class="panel-heading">
@@ -268,7 +268,7 @@
         </div>
       </mat-step>
 
-      <mat-step label="Import" [editable]="false">
+      <mat-step label="Import" [editable]="true">
         <div class="wizard-step-content">
           <section class="import-summary">
             <h2>Import summary</h2>
