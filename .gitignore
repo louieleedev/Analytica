@@ -1,0 +1,11 @@
+.venv/
+venv/
+node_modules/
+dist/
+coverage/
+__pycache__/
+*.py[cod]
+.env
+*.log
+backend/data/
+frontend/.angular/
