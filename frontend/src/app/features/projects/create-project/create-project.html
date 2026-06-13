@@ -1,0 +1,190 @@
+<section class="page create-project-page">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Projects</p>
+      <h1>Create project</h1>
+      <p class="lede">Create a local analytics workspace. This wizard uses static mock data.</p>
+    </div>
+  </div>
+
+  <section class="panel create-wizard-panel">
+    <mat-stepper class="create-stepper" [linear]="false" #stepper>
+      <mat-step label="Project Info" [editable]="false">
+        <div class="wizard-step-content">
+          <div class="wizard-form">
+            <label class="fixed-field">
+              <span>Project Name</span>
+              <mat-form-field appearance="outline">
+                <input #projectName matInput placeholder="Enter project name" />
+              </mat-form-field>
+            </label>
+
+            <label class="fixed-field">
+              <span>Description</span>
+              <mat-form-field appearance="outline">
+                <textarea
+                  #description
+                  matInput
+                  rows="5"
+                  placeholder="Describe the purpose of this analytics project"
+                ></textarea>
+              </mat-form-field>
+            </label>
+          </div>
+
+          <aside class="wizard-context">
+            <mat-icon>info</mat-icon>
+            <h2>Project context</h2>
+            <p>
+              Projects contain imported datasets, saved filters, pivot analyses, visuals, and reports.
+            </p>
+          </aside>
+        </div>
+
+        <div class="wizard-actions">
+          <button
+            mat-flat-button
+            type="button"
+            [disabled]="!isProjectInfoValid(projectName.value, description.value)"
+            (click)="stepper.selectedIndex = 1"
+          >
+            Continue
+          </button>
+        </div>
+      </mat-step>
+
+      <mat-step label="Data Selection" [editable]="false">
+        <div class="wizard-step-content">
+          <div class="data-source-options">
+            <mat-radio-group [value]="importMethod" aria-label="Import method">
+              <label
+                class="import-method-card"
+                [class.selected]="importMethod === 'files'"
+                (click)="selectImportMethod('files')"
+              >
+                <mat-radio-button value="files">Select Files</mat-radio-button>
+                <p>Choose individual CSV or XLSX files for this project.</p>
+
+                <label class="fixed-field compact">
+                  <span>File Type</span>
+                  <mat-form-field appearance="outline">
+                    <mat-select value="CSV">
+                      <mat-option value="CSV">CSV</mat-option>
+                      <mat-option value="XLSX">XLSX</mat-option>
+                    </mat-select>
+                  </mat-form-field>
+                </label>
+
+                <button mat-stroked-button type="button">
+                  <mat-icon>upload_file</mat-icon>
+                  Select Files
+                </button>
+              </label>
+
+              <label
+                class="import-method-card"
+                [class.selected]="importMethod === 'folder'"
+                (click)="selectImportMethod('folder')"
+              >
+                <mat-radio-button value="folder">Select Folder</mat-radio-button>
+                <p>All supported files inside the selected folder will later be imported automatically.</p>
+
+                <button mat-stroked-button type="button">
+                  <mat-icon>drive_folder_upload</mat-icon>
+                  Select Folder
+                </button>
+              </label>
+            </mat-radio-group>
+          </div>
+
+          <aside class="wizard-context">
+            <mat-icon>folder_open</mat-icon>
+            <h2>Mock selection</h2>
+            <div class="mock-file-list">
+              @for (file of mockFiles; track file.name) {
+                <div>
+                  <span>{{ file.name }}</span>
+                  <strong>{{ file.size }}</strong>
+                </div>
+              }
+            </div>
+            <div class="selected-folder-path">
+              <span>Selected folder</span>
+              <strong>{{ selectedFolder }}</strong>
+            </div>
+          </aside>
+        </div>
+
+        <div class="wizard-actions">
+          <button mat-button type="button" (click)="stepper.selectedIndex = 0">Back</button>
+          <button
+            mat-flat-button
+            type="button"
+            [disabled]="!hasMockDataSelection"
+            (click)="stepper.selectedIndex = 2"
+          >
+            Continue
+          </button>
+        </div>
+      </mat-step>
+
+      <mat-step label="Schema Preview" [editable]="false">
+        <div class="wizard-step-content single-column">
+          <section class="schema-preview">
+            <div class="panel-heading">
+              <h2>Detected columns</h2>
+              <span>Static preview</span>
+            </div>
+            <p class="wizard-note">Schema information shown below is currently mock data.</p>
+            <div class="schema-preview-row header">
+              <span>Column</span>
+              <span>Detected Type</span>
+            </div>
+            @for (column of schemaColumns; track column.name) {
+              <div class="schema-preview-row">
+                <span>{{ column.name }}</span>
+                <strong>{{ column.type }}</strong>
+              </div>
+            }
+          </section>
+        </div>
+
+        <div class="wizard-actions">
+          <button mat-button type="button" (click)="stepper.selectedIndex = 1">Back</button>
+          <button mat-flat-button type="button" (click)="stepper.selectedIndex = 3">Continue</button>
+        </div>
+      </mat-step>
+
+      <mat-step label="Import" [editable]="false">
+        <div class="wizard-step-content">
+          <section class="import-summary">
+            <h2>Import summary</h2>
+            <p class="wizard-note">Import summary shown below is currently mock data.</p>
+            <div><span>Project Name</span><strong>{{ projectName.value || 'New analytics project' }}</strong></div>
+            <div><span>Selected Files</span><strong>3 files</strong></div>
+            <div><span>Detected Columns</span><strong>5 columns</strong></div>
+            <div><span>Estimated Rows</span><strong>42,831,904</strong></div>
+          </section>
+
+          <aside class="wizard-context">
+            <mat-icon>check_circle</mat-icon>
+            <h2>Ready to create</h2>
+            <p>No files will be imported in this prototype. This step only represents the final workflow.</p>
+          </aside>
+        </div>
+
+        <div class="wizard-actions">
+          <button mat-button type="button" (click)="stepper.selectedIndex = 2">Back</button>
+          <button
+            mat-flat-button
+            type="button"
+            [disabled]="!isProjectInfoValid(projectName.value, description.value) || !hasMockDataSelection"
+            (click)="createProject(projectName.value, description.value)"
+          >
+            Create Project
+          </button>
+        </div>
+      </mat-step>
+    </mat-stepper>
+  </section>
+</section>

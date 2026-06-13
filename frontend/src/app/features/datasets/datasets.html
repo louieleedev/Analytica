@@ -1,0 +1,72 @@
+<section class="page">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Current Project</p>
+      <h1>Datasets</h1>
+      <p class="lede">Manage imported CSV, Excel, and folder-based files sharing one schema.</p>
+    </div>
+  </div>
+
+  <div class="datasets-grid">
+    <section class="panel upload-zone">
+      <mat-icon>cloud_upload</mat-icon>
+      <h2>Drag & drop structured files</h2>
+      <p>Upload CSV, XLSX, or a folder. All files must share the same schema.</p>
+      <div class="button-row">
+        <button mat-flat-button type="button">Select Files</button>
+        <button mat-stroked-button type="button">Folder Selection</button>
+      </div>
+    </section>
+
+    <aside class="panel storage-panel">
+      <div class="panel-heading"><h2>Import progress</h2><span>Prototype</span></div>
+      <div class="storage-body">
+        <strong>financial_export_q3.csv</strong>
+        <div class="progress-track"><span></span></div>
+        <p>Project size: 37.4 GB</p>
+      </div>
+    </aside>
+  </div>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Dataset preview</h2>
+      <span>Static sample rows</span>
+    </div>
+    <div class="dataset-preview-table">
+      <div class="dataset-preview-row header">
+        @for (column of previewColumns; track column) {
+          <span>{{ column }}</span>
+        }
+      </div>
+      @for (row of previewRows; track row[0]) {
+        <div class="dataset-preview-row">
+          @for (cell of row; track $index) {
+            <span>{{ cell }}</span>
+          }
+        </div>
+      }
+    </div>
+  </section>
+
+  <section class="panel">
+    <div class="panel-heading">
+      <h2>Imported files</h2>
+      <span>Merged into one logical dataset</span>
+    </div>
+    <div class="imported-files-table">
+      <div class="imported-file-row header">
+        <span>File Name</span>
+        <span>File Size</span>
+        <span>Status</span>
+      </div>
+      @for (file of importedFiles; track file.name) {
+        <div class="imported-file-row">
+          <span><mat-icon>description</mat-icon>{{ file.name }}</span>
+          <span>{{ file.size }}</span>
+          <span class="status-badge" [class]="file.tone"><span></span>{{ file.status }}</span>
+        </div>
+      }
+    </div>
+  </section>
+</section>

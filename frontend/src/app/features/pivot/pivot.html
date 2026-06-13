@@ -1,0 +1,155 @@
+<section class="page">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Current Project</p>
+      <h1>Pivot</h1>
+      <p class="lede">Drag fields into the builder, configure values, then apply the pivot.</p>
+    </div>
+  </div>
+
+  <div class="pivot-workbench refined-pivot" [class.locked]="isProcessing">
+    <aside class="panel field-panel">
+      <div class="panel-heading">
+        <h2>Dataset fields</h2>
+        <mat-icon>search</mat-icon>
+      </div>
+      <div class="field-search">Find field...</div>
+      <div
+        id="availableFields"
+        class="field-groups"
+        cdkDropList
+        [cdkDropListData]="availableFields"
+        [cdkDropListConnectedTo]="connectedDropLists"
+        [cdkDropListDisabled]="isProcessing"
+        (cdkDropListDropped)="drop($event, 'availableFields')"
+      >
+        @for (group of groupedAvailableFields; track group.label) {
+          <section>
+            <h3>{{ group.label }}</h3>
+            <div class="field-list">
+              @for (field of group.fields; track field.name) {
+                <span cdkDrag [cdkDragData]="field" [cdkDragDisabled]="isProcessing">
+                  <mat-icon>drag_indicator</mat-icon>
+                  {{ field.name }}
+                </span>
+              }
+            </div>
+          </section>
+        }
+      </div>
+    </aside>
+
+    <div class="pivot-main">
+      <section class="pivot-builder-toolbar">
+        <div>
+          <h2>Pivot Builder</h2>
+          @if (hasPendingChanges) {
+            <p>Pending changes. Click Apply Pivot.</p>
+          } @else {
+            <p>Current results match the applied configuration.</p>
+          }
+          @if (templates.length >= maxTemplates) {
+            <p class="values-helper">Maximum of 4 templates reached. Delete an existing template before creating another.</p>
+          }
+          @if (valuesHelperMessage) {
+            <p class="values-helper">{{ valuesHelperMessage }}</p>
+          }
+        </div>
+        <div class="pivot-toolbar-actions">
+          <button mat-stroked-button type="button" [disabled]="isProcessing" (click)="openTemplatesDialog()">
+            <mat-icon>folder_open</mat-icon>
+            Templates
+          </button>
+          <button
+            mat-stroked-button
+            type="button"
+            [disabled]="isProcessing || templates.length >= maxTemplates"
+            (click)="openSaveTemplateDialog()"
+          >
+            <mat-icon>save</mat-icon>
+            Save Template
+          </button>
+          <button mat-flat-button type="button" [disabled]="isProcessing || !hasPendingChanges" (click)="applyPivot()">
+            <mat-icon>play_arrow</mat-icon>
+            Apply Pivot
+          </button>
+        </div>
+      </section>
+
+      <section class="pivot-builder-grid">
+        @for (zone of zones; track zone.key) {
+          <article
+            class="panel pivot-drop-zone"
+            cdkDropList
+            [id]="zone.key"
+            [cdkDropListData]="zone.fields"
+            [cdkDropListConnectedTo]="connectedDropLists"
+            [cdkDropListDisabled]="isProcessing"
+            (cdkDropListDropped)="drop($event, zone.key)"
+          >
+            <div class="pivot-zone-title">
+              <mat-icon>{{ zone.icon }}</mat-icon>
+              <div>
+                <h2>{{ zone.label }}</h2>
+                <p>{{ zone.helper }}</p>
+              </div>
+            </div>
+            <div class="pivot-zone-fields">
+              @for (field of zone.fields; track field.name) {
+                <div class="pivot-field-chip" cdkDrag [cdkDragData]="field" [cdkDragDisabled]="isProcessing">
+                  <span>{{ field.name }}</span>
+                  @if (zone.key === 'values') {
+                    <mat-select
+                      [value]="field.aggregation ?? 'Sum'"
+                      [disabled]="isProcessing"
+                      (selectionChange)="updateAggregation(field, $event.value)"
+                    >
+                      @for (aggregation of aggregations; track aggregation) {
+                        <mat-option [value]="aggregation">{{ aggregation }}</mat-option>
+                      }
+                    </mat-select>
+                  }
+                  <button
+                    mat-icon-button
+                    type="button"
+                    [disabled]="isProcessing"
+                    (click)="removeField(zone, field)"
+                    aria-label="Remove field"
+                  >
+                    <mat-icon>close</mat-icon>
+                  </button>
+                </div>
+              }
+              <div class="drop-hint">Drop field here</div>
+            </div>
+          </article>
+        }
+      </section>
+
+      <section class="panel pivot-results">
+        <div class="panel-heading">
+          <h2>Pivot Results</h2>
+          <span>Mock output from applied configuration</span>
+        </div>
+        <div class="pivot-table dynamic-pivot-table">
+          <div class="pivot-row header" [style.grid-template-columns]="'1.5fr repeat(' + (pivotResult.headers.length - 1) + ', 1fr)'">
+            @for (header of pivotResult.headers; track header) {
+              <span>{{ header }}</span>
+            }
+          </div>
+          @for (row of pivotResult.rows; track row[0]) {
+            <div
+              class="pivot-row"
+              [class.total]="row[0] === 'Total'"
+              [style.grid-template-columns]="'1.5fr repeat(' + (pivotResult.headers.length - 1) + ', 1fr)'"
+            >
+              @for (cell of row; track $index) {
+                <span>{{ cell }}</span>
+              }
+            </div>
+          }
+        </div>
+      </section>
+    </div>
+  </div>
+</section>

@@ -1,0 +1,113 @@
+<section class="page">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Current Project</p>
+      <h1>Overview</h1>
+      <p class="lede">Understand the loaded dataset structure before analysis.</p>
+    </div>
+  </div>
+
+  <div class="metric-grid">
+    @for (metric of metrics; track metric.label) {
+      <article class="panel metric">
+        <mat-icon>{{ metric.icon }}</mat-icon>
+        <span>{{ metric.label }}</span>
+        <strong>{{ metric.value }}</strong>
+      </article>
+    }
+  </div>
+
+  <div class="content-grid two-columns">
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Column catalog</h2>
+        <span>Sample structure</span>
+      </div>
+      <table mat-table [dataSource]="columns">
+        <ng-container matColumnDef="name">
+          <th mat-header-cell *matHeaderCellDef>Column Name</th>
+          <td mat-cell *matCellDef="let column">{{ column.name }}</td>
+        </ng-container>
+        <ng-container matColumnDef="type">
+          <th mat-header-cell *matHeaderCellDef>Data Type</th>
+          <td mat-cell *matCellDef="let column">{{ column.type }}</td>
+        </ng-container>
+        <ng-container matColumnDef="distinct">
+          <th mat-header-cell *matHeaderCellDef>Distinct Count</th>
+          <td mat-cell *matCellDef="let column">{{ column.distinct }}</td>
+        </ng-container>
+        <ng-container matColumnDef="nulls">
+          <th mat-header-cell *matHeaderCellDef>Null Count</th>
+          <td mat-cell *matCellDef="let column">{{ column.nulls }}</td>
+        </ng-container>
+        <ng-container matColumnDef="quality">
+          <th mat-header-cell *matHeaderCellDef>Populated</th>
+          <td mat-cell *matCellDef="let column">
+            <span class="quality-value">{{ column.quality }}</span>
+          </td>
+        </ng-container>
+        <tr mat-header-row *matHeaderRowDef="displayedColumns"></tr>
+        <tr mat-row *matRowDef="let row; columns: displayedColumns"></tr>
+      </table>
+    </section>
+
+    <section class="panel insight-panel">
+      <div class="panel-heading">
+        <h2>Selected column</h2>
+        <span>{{ selectedColumn.name }} · {{ selectedColumn.type }}</span>
+      </div>
+
+      <div class="column-stats-grid">
+        <div>
+          <span>Distinct Values</span>
+          <strong>{{ selectedColumn.distinctValues }}</strong>
+        </div>
+        <div>
+          <span>Null Count</span>
+          <strong>{{ selectedColumn.nullCount }}</strong>
+        </div>
+        <div>
+          <span>Min</span>
+          <strong>{{ selectedColumn.min }}</strong>
+        </div>
+        <div>
+          <span>Max</span>
+          <strong>{{ selectedColumn.max }}</strong>
+        </div>
+        <div>
+          <span>Average</span>
+          <strong>{{ selectedColumn.average }}</strong>
+        </div>
+        <div>
+          <span>Sum</span>
+          <strong>{{ selectedColumn.sum }}</strong>
+        </div>
+      </div>
+
+      <div class="selected-column-section">
+        <h3>Top Values</h3>
+        <div class="top-values-list">
+          @for (item of selectedColumn.topValues; track item.value) {
+            <div>
+              <span>{{ item.value }}</span>
+              <strong>{{ item.count }}</strong>
+            </div>
+          }
+        </div>
+      </div>
+
+      <div class="selected-column-section">
+        <h3>Distribution</h3>
+        <div class="distribution-list">
+          @for (item of selectedColumn.distribution; track item.label) {
+            <div>
+              <span>{{ item.label }}</span>
+              <div class="distribution-track"><span [style.width]="item.value"></span></div>
+              <strong>{{ item.value }}</strong>
+            </div>
+          }
+        </div>
+      </div>
+    </section>
+  </div>
+</section>

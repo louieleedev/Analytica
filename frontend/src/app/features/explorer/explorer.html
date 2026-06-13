@@ -1,0 +1,182 @@
+<section class="page explorer-page">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Current Project</p>
+      <h1>Explorer</h1>
+      <p class="lede">Interactive filtering with generated controls and a limited dataset preview.</p>
+    </div>
+    <button mat-stroked-button type="button" (click)="resetFilters()">
+      <mat-icon>filter_alt_off</mat-icon>
+      Reset Filters
+    </button>
+  </div>
+
+  <div class="explorer-summary">
+    <article class="panel compact-metric">
+      <span>Total Rows</span>
+      <strong>42,831,904</strong>
+    </article>
+    <article class="panel compact-metric">
+      <span>Rows After Filtering</span>
+      <strong>8,412,509</strong>
+    </article>
+    <article class="panel compact-metric">
+      <span>Preview Limit</span>
+      <strong>100 rows</strong>
+    </article>
+  </div>
+
+  <div class="explorer-grid">
+    <aside class="panel filters-panel">
+      <div class="panel-heading">
+        <h2>Automatic filters</h2>
+        <span>{{ selectedColumns.length }} selected</span>
+      </div>
+
+      @if (selectedColumns.length === 0) {
+        <div class="empty-filter-state">
+          <mat-icon>filter_alt</mat-icon>
+          <p>Select column headers in the dataset preview to generate filters.</p>
+        </div>
+      }
+
+      @for (column of selectedColumns; track column.name) {
+        <section class="filter-group generated-filter">
+          <h3>{{ column.name }} <span>{{ column.filterLabel }}</span></h3>
+
+          @if (column.type === 'text') {
+            <mat-form-field appearance="outline">
+              <mat-label>{{ column.name }}</mat-label>
+              <mat-select multiple [value]="getTextValues(column.name)">
+                <mat-option value="Germany">Germany</mat-option>
+                <mat-option value="United States">United States</mat-option>
+                <mat-option value="France">France</mat-option>
+                <mat-option value="Japan">Japan</mat-option>
+                <mat-option value="EUR">EUR</mat-option>
+                <mat-option value="USD">USD</mat-option>
+                <mat-option value="CC-330">CC-330</mat-option>
+              </mat-select>
+            </mat-form-field>
+          }
+
+          @if (column.type === 'number') {
+            <div class="range-inputs">
+              <mat-form-field appearance="outline">
+                <mat-label>Min</mat-label>
+                <input matInput [value]="getNumericRange(column.name).min" />
+              </mat-form-field>
+              <mat-form-field appearance="outline">
+                <mat-label>Max</mat-label>
+                <input matInput [value]="getNumericRange(column.name).max" />
+              </mat-form-field>
+            </div>
+            <mat-slider min="0" max="100">
+              <input matSliderStartThumb [value]="getNumericRange(column.name).start" />
+              <input matSliderEndThumb [value]="getNumericRange(column.name).end" />
+            </mat-slider>
+          }
+
+          @if (column.type === 'date') {
+            <div class="range-inputs">
+              <mat-form-field appearance="outline">
+                <mat-label>From Date</mat-label>
+                <input matInput type="date" [value]="getDateRange(column.name).from" />
+              </mat-form-field>
+              <mat-form-field appearance="outline">
+                <mat-label>To Date</mat-label>
+                <input matInput type="date" [value]="getDateRange(column.name).to" />
+              </mat-form-field>
+            </div>
+          }
+        </section>
+      }
+    </aside>
+
+    <section class="panel preview-panel">
+      <div class="panel-heading"><h2>Dataset preview</h2><span>First 100 rows only</span></div>
+      <div class="explorer-preview-table">
+        <div class="explorer-preview-row header">
+          @for (column of previewColumns; track column) {
+            <button
+              type="button"
+              class="column-header-button"
+              [class.selected]="isSelected(column.name)"
+              [class.profiler-selected]="isProfilerColumn(column.name)"
+              (click)="toggleColumn(column.name)"
+            >
+              <span>{{ column.name }}</span>
+              @if (isSelected(column.name)) {
+                <mat-icon>filter_alt</mat-icon>
+              }
+            </button>
+          }
+        </div>
+        @for (row of previewRows; track row['CompanyCode'] + row['PostingDate']) {
+          <div class="explorer-preview-row">
+            @for (column of previewColumns; track column.name) {
+              <span
+                [class.selected-column-cell]="isSelected(column.name)"
+                [class.profiler-selected-column-cell]="isProfilerColumn(column.name)"
+              >
+                {{ row[column.name] }}
+              </span>
+            }
+          </div>
+        }
+      </div>
+      <div class="preview-footer">
+        <span>Showing rows 1 - 100 of 8,412,509 filtered rows</span>
+        <span>Page 1 of 84,126</span>
+      </div>
+    </section>
+
+    <aside class="panel analysis-panel">
+      <div class="panel-heading profiler-heading">
+        <h2>Column profiler</h2>
+        <mat-form-field appearance="outline">
+          <mat-select
+            [value]="selectedProfilerColumn.name"
+            (selectionChange)="selectProfilerColumn($event.value)"
+          >
+            @for (column of previewColumns; track column.name) {
+              <mat-option [value]="column.name">{{ column.name }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+      </div>
+      <div class="profiler-metric-grid">
+        @for (metric of selectedProfilerData.metrics; track metric.label) {
+          <div>
+            <span>{{ metric.label }}</span>
+            <strong>{{ metric.value }}</strong>
+          </div>
+        }
+      </div>
+
+      <div class="selected-column-section">
+        <h3>{{ topValuesHeading }}</h3>
+        <div class="top-values-list">
+          @for (item of selectedProfilerData.topValues; track item.value) {
+            <div>
+              <span>{{ item.value }}</span>
+              <strong>{{ item.count }}</strong>
+            </div>
+          }
+        </div>
+      </div>
+
+      <div class="selected-column-section">
+        <h3>{{ distributionHeading }}</h3>
+        <div class="distribution-list">
+          @for (item of selectedProfilerData.distribution; track item.label) {
+            <div>
+              <span>{{ item.label }}</span>
+              <div class="distribution-track"><span [style.width]="item.value"></span></div>
+              <strong>{{ item.value }}</strong>
+            </div>
+          }
+        </div>
+      </div>
+    </aside>
+  </div>
+</section>

@@ -1,0 +1,178 @@
+:host {
+  display: block;
+  min-height: 100vh;
+}
+
+.shell {
+  height: 100vh;
+  background: #f7f9fc;
+}
+
+.sidebar {
+  width: 288px;
+  border-right: 1px solid #dbe4f0;
+  background: #ffffff;
+}
+
+.sidebar ::ng-deep .mat-drawer-inner-container {
+  display: flex;
+  height: 100%;
+  flex-direction: column;
+}
+
+.sidebar-body {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+}
+
+.brand {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 22px 20px 18px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 40px;
+  height: 40px;
+  place-items: center;
+  border-radius: 8px;
+  background: #2f7df6;
+  color: #ffffff;
+  font-weight: 700;
+}
+
+.brand-name {
+  color: #111827;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.brand-caption,
+.workspace-label,
+.section-label {
+  color: #718096;
+  font-size: 12px;
+  font-weight: 600;
+  text-transform: uppercase;
+}
+
+.nav {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: 0 12px 20px;
+}
+
+.bottom-nav {
+  margin-top: auto;
+  border-top: 1px solid #eef3f8;
+  padding-top: 12px;
+}
+
+.nav a,
+.nested-nav a {
+  border-radius: 8px;
+  color: #334155;
+  text-decoration: none;
+  transition:
+    background-color 160ms ease,
+    color 160ms ease,
+    transform 160ms ease;
+}
+
+.nav a:hover,
+.nested-nav a:hover {
+  background: #f0f6ff;
+  color: #1f6feb;
+}
+
+.nav a.active,
+.nested-nav a.active {
+  background: #e8f2ff;
+  color: #1f6feb;
+  font-weight: 700;
+}
+
+.project-nav {
+  border-top: 1px solid #eef3f8;
+  padding-top: 16px;
+}
+
+.section-label {
+  padding: 0 12px 10px;
+}
+
+.selected-project {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 8px 8px;
+  padding: 12px;
+  border: 1px solid #dbe4f0;
+  border-radius: 8px;
+  background: #f8fbff;
+  color: #1e293b;
+  font-weight: 650;
+}
+
+.selected-project mat-icon {
+  color: #2f7df6;
+}
+
+.nested-nav {
+  margin-left: 18px;
+  padding-left: 8px;
+  border-left: 2px solid #dbe4f0;
+}
+
+.nested-nav mat-nav-list {
+  padding: 0;
+}
+
+.content {
+  height: 100vh;
+  overflow: auto;
+}
+
+.topbar {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  height: 68px;
+  border-bottom: 1px solid #dbe4f0;
+  background: rgba(255, 255, 255, 0.94);
+  backdrop-filter: blur(10px);
+}
+
+.workspace {
+  min-width: 220px;
+}
+
+.workspace-title {
+  color: #111827;
+  font-size: 17px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.topbar-spacer {
+  flex: 1;
+}
+
+.page-frame {
+  padding: 28px;
+}
+
+@media (max-width: 900px) {
+  .sidebar {
+    width: 248px;
+  }
+
+  .page-frame {
+    padding: 18px;
+  }
+}

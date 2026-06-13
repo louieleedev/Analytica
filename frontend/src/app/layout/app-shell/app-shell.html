@@ -1,0 +1,67 @@
+<mat-sidenav-container class="shell">
+  <mat-sidenav class="sidebar" mode="side" opened>
+    <div class="brand">
+      <div class="brand-mark">A</div>
+      <div>
+        <div class="brand-name">Analytica</div>
+        <div class="brand-caption">Local analytics</div>
+      </div>
+    </div>
+
+    <div class="sidebar-body">
+      <mat-nav-list class="nav" aria-label="Main navigation">
+        <a
+          mat-list-item
+          routerLink="/projects"
+          routerLinkActive="active"
+          [routerLinkActiveOptions]="{ exact: false }"
+        >
+          <mat-icon matListItemIcon>folder_open</mat-icon>
+          <span matListItemTitle>Projects</span>
+        </a>
+
+        @if (projectSelection.activeProject(); as activeProject) {
+          <section class="project-nav" aria-label="Current project navigation">
+            <div class="section-label">Current Project</div>
+            <div class="selected-project">
+              <mat-icon>analytics</mat-icon>
+              <span>{{ activeProject.name }}</span>
+            </div>
+
+            <div class="nested-nav">
+              <mat-nav-list aria-label="Current project pages">
+                @for (item of projectNavItems; track item.route) {
+                  <a mat-list-item [routerLink]="item.route" routerLinkActive="active">
+                    <mat-icon matListItemIcon>{{ item.icon }}</mat-icon>
+                    <span matListItemTitle>{{ item.label }}</span>
+                  </a>
+                }
+              </mat-nav-list>
+            </div>
+          </section>
+        }
+      </mat-nav-list>
+
+      <mat-nav-list class="nav bottom-nav" aria-label="Application navigation">
+        <a mat-list-item routerLink="/settings" routerLinkActive="active">
+          <mat-icon matListItemIcon>settings</mat-icon>
+          <span matListItemTitle>Settings</span>
+        </a>
+      </mat-nav-list>
+    </div>
+  </mat-sidenav>
+
+  <mat-sidenav-content class="content">
+    <mat-toolbar class="topbar">
+      <div class="workspace">
+        <div class="workspace-label">Workspace</div>
+        <div class="workspace-title">{{ projectSelection.activeProject()?.name ?? 'No project selected' }}</div>
+      </div>
+      <span class="topbar-spacer"></span>
+    </mat-toolbar>
+
+    <main class="page-frame">
+      <router-outlet />
+    </main>
+  </mat-sidenav-content>
+</mat-sidenav-container>

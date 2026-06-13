@@ -1,0 +1,19 @@
+<section class="page">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Current Project</p>
+      <h1>Visuals</h1>
+      <p class="lede">Simple chart placeholders for analysis results.</p>
+    </div>
+  </div>
+
+  <div class="project-grid">
+    @for (chart of charts; track chart.title) {
+      <article class="panel visual-card">
+        <mat-icon>{{ chart.icon }}</mat-icon>
+        <h2>{{ chart.title }}</h2>
+        <div class="chart-skeleton"></div>
+      </article>
+    }
+  </div>
+</section>

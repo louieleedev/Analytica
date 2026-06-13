@@ -1,0 +1,54 @@
+<section class="page">
+  <div class="page-header">
+    <div>
+      <p class="eyebrow">Projects</p>
+      <h1>Analytics projects</h1>
+      <p class="lede">Create, rename, delete, and open local analytics projects.</p>
+    </div>
+    <button mat-flat-button type="button" routerLink="/projects/create">
+      <mat-icon>add</mat-icon>
+      Create Project
+    </button>
+  </div>
+
+  @if (projects().length === 0) {
+    <section class="panel empty-project-state">
+      <mat-icon>folder_off</mat-icon>
+      <h2>No projects available</h2>
+      <p>Create your first analytics project to get started.</p>
+      <button mat-flat-button type="button" routerLink="/projects/create">
+        <mat-icon>add</mat-icon>
+        Create Project
+      </button>
+    </section>
+  } @else {
+    <div class="project-grid">
+      @for (project of projects(); track project.id) {
+        <article
+          class="panel project-card"
+          routerLink="/project/overview"
+          tabindex="0"
+          role="link"
+          (click)="openProject(project)"
+          (keydown.enter)="openProject(project)"
+        >
+          <div class="project-card-header">
+            <mat-icon>folder_open</mat-icon>
+            <span class="status-badge" [class]="project.tone">
+              <span></span>
+              {{ project.status }}
+            </span>
+          </div>
+          <h2>{{ project.name }}</h2>
+          <p>{{ project.description }}</p>
+          <p>{{ project.rows }} | Local analytics workspace</p>
+          <div class="card-actions">
+            <button mat-button type="button" (click)="renameProject($event, project)">Rename</button>
+            <button mat-button type="button" (click)="deleteProject($event, project)">Delete</button>
+            <mat-icon>arrow_forward</mat-icon>
+          </div>
+        </article>
+      }
+    </div>
+  }
+</section>
