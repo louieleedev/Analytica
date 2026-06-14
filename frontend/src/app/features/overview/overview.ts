@@ -52,7 +52,13 @@ export class Overview implements OnInit {
   });
 
   ngOnInit(): void {
-    const datasetId = this.projectSelection.activeProject()?.datasetMetadata?.datasetId;
+    const activeProject = this.projectSelection.activeProject();
+    const datasetId = activeProject?.datasetMetadata?.datasetId;
+    console.info('Overview dataset context', {
+      projectId: activeProject?.id ?? null,
+      datasetId: datasetId ?? null,
+    });
+
     if (!datasetId) {
       this.errorMessage.set('Open a project created from uploaded files to view dataset statistics.');
       return;

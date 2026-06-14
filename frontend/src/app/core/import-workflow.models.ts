@@ -2,6 +2,7 @@ export type DatasetFileType = 'CSV' | 'XLSX';
 export type ImportMethod = 'files' | 'folder';
 export type DetectedColumnType = 'Text' | 'Integer' | 'Decimal' | 'Date' | 'Boolean';
 export type ColumnCategory = 'Measure' | 'Identifier' | 'Text' | 'Date';
+export type ExplorerColumnCategory = 'TYPE_VARIANT' | 'TIME_PERIOD' | 'AMOUNT' | 'IDENTIFIER';
 
 export type ImportedFileInfo = {
   name: string;
@@ -54,6 +55,107 @@ export type DatasetOverview = {
   columns: OverviewColumn[];
 };
 
+export type ExplorerDataset = {
+  datasetId: string;
+  summary: {
+    totalRows: number;
+    rowsAfterFiltering: number;
+    previewLimit: number;
+  };
+  columns: OverviewColumn[];
+  preview: DatasetPreview;
+};
+
+export type ExplorerFilterType = DetectedColumnType;
+
+export type ExplorerTextFilter = {
+  columnName: string;
+  type: 'Text' | 'Boolean';
+  values: string[];
+};
+
+export type ExplorerNumericFilter = {
+  columnName: string;
+  type: 'Integer' | 'Decimal';
+  min: number | null;
+  max: number | null;
+};
+
+export type ExplorerDateFilter = {
+  columnName: string;
+  type: 'Date';
+  from: string | null;
+  to: string | null;
+};
+
+export type ExplorerTypeVariantFilter = {
+  columnName: string;
+  category: 'TYPE_VARIANT';
+  values: string[];
+};
+
+export type ExplorerAmountFilter = {
+  columnName: string;
+  category: 'AMOUNT';
+  min: number | null;
+  max: number | null;
+};
+
+export type ExplorerTimePeriodFilter = {
+  columnName: string;
+  category: 'TIME_PERIOD';
+  from: string | null;
+  to: string | null;
+  fromYear: number | null;
+  toYear: number | null;
+};
+
+export type ExplorerIdentifierFilter = {
+  columnName: string;
+  category: 'IDENTIFIER';
+  operator: 'Equals' | 'Contains' | 'Starts With' | 'Ends With';
+  value: string;
+};
+
+export type ExplorerFilterPayload =
+  | ExplorerTextFilter
+  | ExplorerNumericFilter
+  | ExplorerDateFilter
+  | ExplorerTypeVariantFilter
+  | ExplorerAmountFilter
+  | ExplorerTimePeriodFilter
+  | ExplorerIdentifierFilter;
+
+export type ExplorerFilterRequest = {
+  selectedColumns: string[];
+  selectedCategories?: Record<string, ExplorerColumnCategory>;
+  filters: ExplorerFilterPayload[];
+  profileColumnName?: string | null;
+  profileCategory?: ExplorerColumnCategory | null;
+};
+
+export type ExplorerFilterMetadata = {
+  columnName: string;
+  type: ExplorerFilterType;
+  values?: TopValue[];
+  min?: number | null;
+  max?: number | null;
+  from?: string | null;
+  to?: string | null;
+};
+
+export type ExplorerFilterResult = {
+  datasetId: string;
+  summary: {
+    totalRows: number;
+    rowsAfterFiltering: number;
+    previewLimit: number;
+  };
+  filterMetadata: ExplorerFilterMetadata[];
+  preview: DatasetPreview;
+  columnProfile?: ColumnProfile | null;
+};
+
 export type TopValue = {
   value: string;
   count: number;
@@ -70,6 +172,8 @@ export type ColumnProfile = {
   name: string;
   type: DetectedColumnType;
   category: ColumnCategory;
+  explorerCategory?: ExplorerColumnCategory | null;
+  rowCount?: number;
   distinctValues: number;
   nullCount: number;
   topValues: TopValue[];
@@ -88,6 +192,8 @@ export type ColumnProfile = {
   mostActiveMonth?: string | null;
   mostActiveYear?: string | null;
   timelineDistribution?: DistributionBucket[];
+  uniqueValues?: number | null;
+  duplicateValues?: number | null;
   uniquePercentage?: number | null;
   duplicatePercentage?: number | null;
 };

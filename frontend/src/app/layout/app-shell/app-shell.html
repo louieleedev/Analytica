@@ -52,14 +52,6 @@
   </mat-sidenav>
 
   <mat-sidenav-content class="content">
-    <mat-toolbar class="topbar">
-      <div class="workspace">
-        <div class="workspace-label">Workspace</div>
-        <div class="workspace-title">{{ projectSelection.activeProject()?.name ?? 'No project selected' }}</div>
-      </div>
-      <span class="topbar-spacer"></span>
-    </mat-toolbar>
-
     <main class="page-frame">
       <router-outlet />
     </main>

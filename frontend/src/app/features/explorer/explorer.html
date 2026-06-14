@@ -3,180 +3,482 @@
     <div>
       <p class="eyebrow">Current Project</p>
       <h1>Explorer</h1>
-      <p class="lede">Interactive filtering with generated controls and a limited dataset preview.</p>
+      <p class="lede">Inspect imported records, fields, and column statistics from the active dataset.</p>
     </div>
-    <button mat-stroked-button type="button" (click)="resetFilters()">
-      <mat-icon>filter_alt_off</mat-icon>
-      Reset Filters
-    </button>
   </div>
 
-  <div class="explorer-summary">
-    <article class="panel compact-metric">
-      <span>Total Rows</span>
-      <strong>42,831,904</strong>
-    </article>
-    <article class="panel compact-metric">
-      <span>Rows After Filtering</span>
-      <strong>8,412,509</strong>
-    </article>
-    <article class="panel compact-metric">
-      <span>Preview Limit</span>
-      <strong>100 rows</strong>
-    </article>
-  </div>
-
-  <div class="explorer-grid">
-    <aside class="panel filters-panel">
-      <div class="panel-heading">
-        <h2>Automatic filters</h2>
-        <span>{{ selectedColumns.length }} selected</span>
+  @if (errorMessage()) {
+    <section class="panel empty-project-state">
+      <mat-icon>info</mat-icon>
+      <h2>Explorer unavailable</h2>
+      <p>{{ errorMessage() }}</p>
+    </section>
+  } @else if (isDatasetLoading()) {
+    <section class="panel loading-state">
+      <mat-spinner diameter="36"></mat-spinner>
+      <span>Loading imported dataset...</span>
+    </section>
+  } @else if (explorerDataset(); as dataset) {
+    <div class="panel explorer-overview-bar">
+      <div class="explorer-summary">
+        <article class="compact-metric">
+          <span>Total Rows</span>
+          <strong>{{ formatNumber(dataset.summary.totalRows) }}</strong>
+        </article>
+        <article class="compact-metric">
+          <span>Filtered Rows</span>
+          <strong>
+            {{ formatNumber(dataset.summary.rowsAfterFiltering) }}
+          </strong>
+        </article>
       </div>
+      <div class="explorer-header-actions">
+        <button mat-stroked-button type="button" class="toolbar-action-button" [disabled]="filterColumns.length === 0 || isFiltering()" (click)="resetFilters()">
+          <mat-icon>filter_alt_off</mat-icon>
+          Reset Filters
+        </button>
+        <button mat-stroked-button type="button" class="toolbar-action-button" (click)="openSaveFiltersDialog()">
+          <mat-icon>save</mat-icon>
+          Save View
+        </button>
+        <button mat-stroked-button type="button" class="toolbar-action-button" (click)="openLoadFiltersDialog()">
+          <mat-icon>folder_open</mat-icon>
+          Load View
+        </button>
+      </div>
+    </div>
 
-      @if (selectedColumns.length === 0) {
-        <div class="empty-filter-state">
-          <mat-icon>filter_alt</mat-icon>
-          <p>Select column headers in the dataset preview to generate filters.</p>
+    <div class="explorer-grid">
+      <aside class="panel filters-panel">
+        <div class="panel-heading">
+          <h2>Filters</h2>
+          <span>{{ formatNumber(filterColumns.length) }} generated</span>
         </div>
-      }
 
-      @for (column of selectedColumns; track column.name) {
-        <section class="filter-group generated-filter">
-          <h3>{{ column.name }} <span>{{ column.filterLabel }}</span></h3>
+        @if (filterColumns.length === 0) {
+          <div class="empty-filter-state">
+            <mat-icon>filter_alt</mat-icon>
+            <p>No filters configured.</p>
+          </div>
+        }
 
-          @if (column.type === 'text') {
-            <mat-form-field appearance="outline">
-              <mat-label>{{ column.name }}</mat-label>
-              <mat-select multiple [value]="getTextValues(column.name)">
-                <mat-option value="Germany">Germany</mat-option>
-                <mat-option value="United States">United States</mat-option>
-                <mat-option value="France">France</mat-option>
-                <mat-option value="Japan">Japan</mat-option>
-                <mat-option value="EUR">EUR</mat-option>
-                <mat-option value="USD">USD</mat-option>
-                <mat-option value="CC-330">CC-330</mat-option>
-              </mat-select>
-            </mat-form-field>
-          }
-
-          @if (column.type === 'number') {
-            <div class="range-inputs">
-              <mat-form-field appearance="outline">
-                <mat-label>Min</mat-label>
-                <input matInput [value]="getNumericRange(column.name).min" />
-              </mat-form-field>
-              <mat-form-field appearance="outline">
-                <mat-label>Max</mat-label>
-                <input matInput [value]="getNumericRange(column.name).max" />
-              </mat-form-field>
-            </div>
-            <mat-slider min="0" max="100">
-              <input matSliderStartThumb [value]="getNumericRange(column.name).start" />
-              <input matSliderEndThumb [value]="getNumericRange(column.name).end" />
-            </mat-slider>
-          }
-
-          @if (column.type === 'date') {
-            <div class="range-inputs">
-              <mat-form-field appearance="outline">
-                <mat-label>From Date</mat-label>
-                <input matInput type="date" [value]="getDateRange(column.name).from" />
-              </mat-form-field>
-              <mat-form-field appearance="outline">
-                <mat-label>To Date</mat-label>
-                <input matInput type="date" [value]="getDateRange(column.name).to" />
-              </mat-form-field>
-            </div>
-          }
-        </section>
-      }
-    </aside>
-
-    <section class="panel preview-panel">
-      <div class="panel-heading"><h2>Dataset preview</h2><span>First 100 rows only</span></div>
-      <div class="explorer-preview-table">
-        <div class="explorer-preview-row header">
-          @for (column of previewColumns; track column) {
+        @for (column of filterColumns; track column.name) {
+          <section class="filter-group generated-filter">
             <button
               type="button"
-              class="column-header-button"
-              [class.selected]="isSelected(column.name)"
-              [class.profiler-selected]="isProfilerColumn(column.name)"
-              (click)="toggleColumn(column.name)"
+              class="filter-remove-icon-button"
+              aria-label="Remove filter"
+              (click)="removeFilterColumn(column.name)"
             >
-              <span>{{ column.name }}</span>
-              @if (isSelected(column.name)) {
-                <mat-icon>filter_alt</mat-icon>
-              }
+              <mat-icon>close</mat-icon>
             </button>
+            <div class="filter-card-header">
+              <h3>{{ column.name }}</h3>
+              @if (getCategoryOption(getColumnCategory(column.name)); as category) {
+                <strong
+                  class="category-tag"
+                  [class.type-variant]="category.value === 'TYPE_VARIANT'"
+                  [class.time-period]="category.value === 'TIME_PERIOD'"
+                  [class.amount]="category.value === 'AMOUNT'"
+                  [class.identifier]="category.value === 'IDENTIFIER'"
+                >
+                  {{ category.tag }}
+                </strong>
+              }
+            </div>
+
+            @if (getColumnCategory(column.name) === 'TYPE_VARIANT') {
+              <mat-form-field appearance="outline">
+                <mat-label>Values</mat-label>
+                <mat-select
+                  multiple
+                  [value]="getTextValues(column.name)"
+                  (selectionChange)="updateTextFilter(column.name, $event.value)"
+                >
+                  @for (item of getFilterMetadata(column.name)?.values ?? []; track item.value) {
+                    <mat-option [value]="item.value">
+                      {{ item.value }} ({{ formatNumber(item.count) }})
+                    </mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            }
+
+            @if (getColumnCategory(column.name) === 'TIME_PERIOD') {
+              @if (getFilterMetadata(column.name); as metadata) {
+                @if (isDateTimeFilter(column.name)) {
+                  <div class="range-inputs">
+                    <mat-form-field appearance="outline">
+                      <mat-label>From Date</mat-label>
+                      <input
+                        matInput
+                        type="text"
+                        [value]="getTimeRange(column.name).from ?? ''"
+                        (change)="updateTimeFilter(column.name, 'from', $any($event.target).value)"
+                      />
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                      <mat-label>To Date</mat-label>
+                      <input
+                        matInput
+                        type="text"
+                        [value]="getTimeRange(column.name).to ?? ''"
+                        (change)="updateTimeFilter(column.name, 'to', $any($event.target).value)"
+                      />
+                    </mat-form-field>
+                  </div>
+                } @else {
+                  <div class="range-inputs">
+                    <mat-form-field appearance="outline">
+                      <mat-label>From Year</mat-label>
+                      <input
+                        matInput
+                        type="number"
+                        [value]="getDefaultFromYear(column.name) ?? ''"
+                        (change)="updateTimeFilter(column.name, 'fromYear', $any($event.target).value)"
+                      />
+                    </mat-form-field>
+                    <mat-form-field appearance="outline">
+                      <mat-label>To Year</mat-label>
+                      <input
+                        matInput
+                        type="number"
+                        [value]="getDefaultToYear(column.name) ?? ''"
+                        (change)="updateTimeFilter(column.name, 'toYear', $any($event.target).value)"
+                      />
+                    </mat-form-field>
+                  </div>
+                }
+              }
+            }
+
+            @if (getColumnCategory(column.name) === 'AMOUNT') {
+              @if (getFilterMetadata(column.name); as metadata) {
+                <div class="range-inputs">
+                  <mat-form-field appearance="outline">
+                    <mat-label>Minimum</mat-label>
+                    <input
+                      matInput
+                      type="number"
+                      [value]="getNumericRange(column.name).min ?? ''"
+                      [placeholder]="formatDecimal(metadata.min)"
+                      (change)="updateNumericFilter(column.name, 'min', $any($event.target).value)"
+                    />
+                  </mat-form-field>
+                  <mat-form-field appearance="outline">
+                    <mat-label>Maximum</mat-label>
+                    <input
+                      matInput
+                      type="number"
+                      [value]="getNumericRange(column.name).max ?? ''"
+                      [placeholder]="formatDecimal(metadata.max)"
+                      (change)="updateNumericFilter(column.name, 'max', $any($event.target).value)"
+                    />
+                  </mat-form-field>
+                </div>
+                <mat-slider [min]="metadata.min ?? 0" [max]="metadata.max ?? 100">
+                  <input
+                    matSliderStartThumb
+                    [value]="getNumericRange(column.name).min ?? metadata.min ?? 0"
+                    (valueChange)="updateNumericFilter(column.name, 'min', $event)"
+                  />
+                  <input
+                    matSliderEndThumb
+                    [value]="getNumericRange(column.name).max ?? metadata.max ?? 100"
+                    (valueChange)="updateNumericFilter(column.name, 'max', $event)"
+                  />
+                </mat-slider>
+              }
+            }
+
+            @if (getColumnCategory(column.name) === 'IDENTIFIER') {
+              <div class="identifier-filter-grid">
+                <mat-form-field appearance="outline">
+                  <mat-label>Operator</mat-label>
+                  <mat-select
+                    [value]="getIdentifierFilter(column.name).operator"
+                    (selectionChange)="updateIdentifierOperator(column.name, $event.value)"
+                  >
+                    @for (operator of identifierOperators; track operator) {
+                      <mat-option [value]="operator">{{ operator }}</mat-option>
+                    }
+                  </mat-select>
+                </mat-form-field>
+                <mat-form-field appearance="outline">
+                  <mat-label>Search</mat-label>
+                  <input
+                    matInput
+                    type="text"
+                    [value]="getIdentifierFilter(column.name).value"
+                    placeholder="Search identifier"
+                    (input)="updateIdentifierValue(column.name, $any($event.target).value)"
+                  />
+                </mat-form-field>
+              </div>
+            }
+          </section>
+        }
+      </aside>
+
+      <section class="panel preview-panel">
+        <div class="panel-heading">
+          <h2>Dataset preview</h2>
+          <span>First {{ formatNumber(previewRows().length) }} rows only</span>
+        </div>
+
+        <div class="explorer-preview-table">
+          <table>
+            <thead>
+              <tr>
+                @for (column of previewColumns(); track column) {
+                  <th [class.profiler-selected]="isSelectedColumn(column)">
+                    <button
+                      type="button"
+                      class="column-header-button"
+                      [class.selected]="hasFilterColumn(column)"
+                      (click)="onColumnHeaderClick(column, $event)"
+                      (dblclick)="onColumnHeaderDoubleClick(column, $event)"
+                    >
+                      @if (getCategoryOption(getColumnCategory(column)); as category) {
+                        <strong
+                          class="category-tag"
+                          [class.type-variant]="category.value === 'TYPE_VARIANT'"
+                          [class.time-period]="category.value === 'TIME_PERIOD'"
+                          [class.amount]="category.value === 'AMOUNT'"
+                          [class.identifier]="category.value === 'IDENTIFIER'"
+                          (dblclick)="$event.stopPropagation(); openCategoryDialog(column)"
+                        >
+                          {{ category.tag }}
+                        </strong>
+                      }
+                      <span>{{ column }}</span>
+                      @if (hasFilterColumn(column)) {
+                        <mat-icon>filter_alt</mat-icon>
+                      }
+                    </button>
+                  </th>
+                }
+              </tr>
+            </thead>
+            <tbody>
+              @for (row of previewRows(); track $index) {
+                <tr>
+                  @for (column of previewColumns(); track column) {
+                    <td
+                      [class.profiler-selected-column-cell]="isSelectedColumn(column)"
+                      [class.selected-column-cell]="hasFilterColumn(column)"
+                    >
+                      {{ formatCellValue(row[column]) }}
+                    </td>
+                  }
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+
+        <div class="preview-footer">
+          <span>
+            Showing rows 1 - {{ formatNumber(previewRows().length) }} of
+            {{ formatNumber(dataset.summary.rowsAfterFiltering) }} filtered rows
+            ({{ formatNumber(dataset.summary.totalRows) }} original)
+          </span>
+          <span>{{ formatNumber(previewColumns().length) }} columns</span>
+        </div>
+      </section>
+
+      <aside class="panel analysis-panel">
+        <div class="panel-heading profiler-heading">
+          <h2>Column profiler</h2>
+          <button mat-stroked-button type="button" (click)="openProfilerColumnDialog()">
+            @if (selectedColumnName()) {
+              Change Column
+            } @else {
+              Select Column
+            }
+          </button>
+        </div>
+
+        <div class="profiler-selected-summary">
+          <span>Selected Column</span>
+          @if (selectedColumn(); as column) {
+            <div class="profiler-selected-column">
+              <strong>{{ column.name }}</strong>
+              @if (getCategoryOption(getColumnCategory(column.name)); as category) {
+                <span
+                  class="category-tag"
+                  [class.type-variant]="category.value === 'TYPE_VARIANT'"
+                  [class.time-period]="category.value === 'TIME_PERIOD'"
+                  [class.amount]="category.value === 'AMOUNT'"
+                  [class.identifier]="category.value === 'IDENTIFIER'"
+                >
+                  {{ category.tag }}
+                </span>
+              }
+            </div>
+          } @else {
+            <strong>No column selected</strong>
           }
         </div>
-        @for (row of previewRows; track row['CompanyCode'] + row['PostingDate']) {
-          <div class="explorer-preview-row">
-            @for (column of previewColumns; track column.name) {
-              <span
-                [class.selected-column-cell]="isSelected(column.name)"
-                [class.profiler-selected-column-cell]="isProfilerColumn(column.name)"
-              >
-                {{ row[column.name] }}
-              </span>
-            }
-          </div>
-        }
-      </div>
-      <div class="preview-footer">
-        <span>Showing rows 1 - 100 of 8,412,509 filtered rows</span>
-        <span>Page 1 of 84,126</span>
-      </div>
-    </section>
 
-    <aside class="panel analysis-panel">
-      <div class="panel-heading profiler-heading">
-        <h2>Column profiler</h2>
-        <mat-form-field appearance="outline">
-          <mat-select
-            [value]="selectedProfilerColumn.name"
-            (selectionChange)="selectProfilerColumn($event.value)"
-          >
-            @for (column of previewColumns; track column.name) {
-              <mat-option [value]="column.name">{{ column.name }}</mat-option>
-            }
-          </mat-select>
-        </mat-form-field>
-      </div>
-      <div class="profiler-metric-grid">
-        @for (metric of selectedProfilerData.metrics; track metric.label) {
-          <div>
-            <span>{{ metric.label }}</span>
-            <strong>{{ metric.value }}</strong>
-          </div>
-        }
-      </div>
+        <div class="profiler-divider"></div>
 
-      <div class="selected-column-section">
-        <h3>{{ topValuesHeading }}</h3>
-        <div class="top-values-list">
-          @for (item of selectedProfilerData.topValues; track item.value) {
+        @if (isColumnLoading()) {
+          <div class="loading-state">
+            <mat-spinner diameter="34"></mat-spinner>
+            <span>Calculating column statistics...</span>
+          </div>
+        } @else if (selectedColumnProfile(); as profile) {
+          <div class="profiler-metric-grid">
             <div>
-              <span>{{ item.value }}</span>
-              <strong>{{ item.count }}</strong>
+              <span>Distinct Values</span>
+              <strong>{{ formatNumber(profile.distinctValues) }}</strong>
+            </div>
+            <div>
+              <span>Null Count</span>
+              <strong>{{ formatNumber(profile.nullCount) }}</strong>
+            </div>
+          </div>
+
+          @if (getProfilerCategory(profile) === 'TYPE_VARIANT') {
+            <div class="selected-column-section profiler-toolbar-section">
+              <h3>Top Values</h3>
+              <mat-form-field appearance="outline">
+                <mat-label>Sort</mat-label>
+                <mat-select
+                  [value]="typeVariantSort"
+                  (selectionChange)="updateTypeVariantSort($event.value)"
+                >
+                  @for (option of typeVariantSortOptions; track option.value) {
+                    <mat-option [value]="option.value">{{ option.label }}</mat-option>
+                  }
+                </mat-select>
+              </mat-form-field>
+            </div>
+            <div class="selected-column-section">
+              <div class="distribution-list profiler-bar-list">
+                @for (item of getTypeVariantValues(profile); track item.value) {
+                  <div>
+                    <span>{{ item.value }}</span>
+                    <div class="distribution-track">
+                      <span [style.width.%]="item.percentage ?? 0"></span>
+                    </div>
+                    <strong>{{ formatNumber(item.count) }} ({{ formatPercentage(item.percentage) }})</strong>
+                  </div>
+                }
+              </div>
+            </div>
+          } @else if (getProfilerCategory(profile) === 'TIME_PERIOD') {
+            <div class="profiler-metric-grid">
+              <div>
+                <span>Earliest Value</span>
+                <strong>{{ profile.earliestDate ?? '-' }}</strong>
+              </div>
+              <div>
+                <span>Latest Value</span>
+                <strong>{{ profile.latestDate ?? '-' }}</strong>
+              </div>
+            </div>
+
+            @if (getTimeDistribution(profile).length) {
+              <div class="selected-column-section">
+                <h3>Timeline Distribution</h3>
+                <div class="distribution-list profiler-bar-list">
+                  @for (item of getTimeDistribution(profile); track item.label) {
+                    <div>
+                      <span>{{ item.label }}</span>
+                      <div class="distribution-track">
+                        <span [style.width.%]="item.percentage"></span>
+                      </div>
+                      <strong>{{ formatNumber(item.count) }} ({{ formatPercentage(item.percentage) }})</strong>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+          } @else if (getProfilerCategory(profile) === 'AMOUNT') {
+            <div class="profiler-metric-grid">
+              <div>
+                <span>Minimum</span>
+                <strong>{{ formatDecimal(profile.min) }}</strong>
+              </div>
+              <div>
+                <span>Maximum</span>
+                <strong>{{ formatDecimal(profile.max) }}</strong>
+              </div>
+              <div>
+                <span>Average</span>
+                <strong>{{ formatDecimal(profile.average) }}</strong>
+              </div>
+              <div>
+                <span>Median</span>
+                <strong>{{ formatDecimal(profile.median) }}</strong>
+              </div>
+              <div>
+                <span>Sum</span>
+                <strong>{{ formatDecimal(profile.sum) }}</strong>
+              </div>
+              <div>
+                <span>Standard Deviation</span>
+                <strong>{{ formatDecimal(profile.standardDeviation) }}</strong>
+              </div>
+            </div>
+
+            @if (profile.distribution?.length) {
+              <div class="selected-column-section">
+                <h3>Value Distribution</h3>
+                <div class="distribution-list profiler-bar-list">
+                  @for (item of profile.distribution; track item.label) {
+                    <div>
+                      <span>{{ item.label }}</span>
+                      <div class="distribution-track">
+                        <span [style.width.%]="item.percentage"></span>
+                      </div>
+                      <strong>{{ formatNumber(item.count) }} ({{ formatPercentage(item.percentage) }})</strong>
+                    </div>
+                  }
+                </div>
+              </div>
+            }
+          } @else if (getProfilerCategory(profile) === 'IDENTIFIER') {
+            <div class="profiler-metric-grid">
+              <div>
+                <span>Unique Values</span>
+                <strong>{{ formatNumber(profile.uniqueValues) }}</strong>
+              </div>
+              <div>
+                <span>Duplicate Values</span>
+                <strong>{{ formatNumber(profile.duplicateValues) }}</strong>
+              </div>
+              <div>
+                <span>Unique Percentage</span>
+                <strong>{{ formatPercentage(profile.uniquePercentage) }}</strong>
+              </div>
+              <div>
+                <span>Duplicate Percentage</span>
+                <strong>{{ formatPercentage(profile.duplicatePercentage) }}</strong>
+              </div>
+            </div>
+
+            <div class="selected-column-section">
+              <h3>Top Occurring Identifiers</h3>
+              <div class="top-values-list">
+                @for (item of getIdentifierValues(profile); track item.value) {
+                  <div>
+                    <span>{{ item.value }}</span>
+                    <strong>{{ formatNumber(item.count) }} ({{ formatPercentage(item.percentage) }})</strong>
+                  </div>
+                }
+              </div>
+            </div>
+          } @else {
+            <div class="selected-column-section empty-filter-state">
+              <mat-icon>category</mat-icon>
+              <p>Assign a category to this column to enable category-specific profiling.</p>
             </div>
           }
-        </div>
-      </div>
-
-      <div class="selected-column-section">
-        <h3>{{ distributionHeading }}</h3>
-        <div class="distribution-list">
-          @for (item of selectedProfilerData.distribution; track item.label) {
-            <div>
-              <span>{{ item.label }}</span>
-              <div class="distribution-track"><span [style.width]="item.value"></span></div>
-              <strong>{{ item.value }}</strong>
-            </div>
-          }
-        </div>
-      </div>
-    </aside>
-  </div>
+        }
+      </aside>
+    </div>
+  }
 </section>

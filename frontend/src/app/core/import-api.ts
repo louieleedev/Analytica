@@ -4,6 +4,9 @@ import { Injectable, inject } from '@angular/core';
 import {
   ColumnProfile,
   DatasetFileType,
+  ExplorerDataset,
+  ExplorerFilterRequest,
+  ExplorerFilterResult,
   DatasetOverview,
   ImportMethod,
   ImportPreview,
@@ -39,5 +42,25 @@ export class ImportApi {
     return this.http.get<ColumnProfile>(`${this.apiBaseUrl}/datasets/${datasetId}/columns/profile`, {
       params: { column_name: columnName },
     });
+  }
+
+  getExplorerDataset(datasetId: string) {
+    return this.http.get<ExplorerDataset>(`${this.apiBaseUrl}/datasets/${datasetId}/explorer`);
+  }
+
+  getExplorerColumnProfile(datasetId: string, columnName: string) {
+    return this.http.get<ColumnProfile>(
+      `${this.apiBaseUrl}/datasets/${datasetId}/explorer/columns/profile`,
+      {
+        params: { column_name: columnName },
+      },
+    );
+  }
+
+  filterExplorerDataset(datasetId: string, payload: ExplorerFilterRequest) {
+    return this.http.post<ExplorerFilterResult>(
+      `${this.apiBaseUrl}/datasets/${datasetId}/explorer/filter`,
+      payload,
+    );
   }
 }

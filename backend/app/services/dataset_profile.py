@@ -79,6 +79,16 @@ def build_column_profile(dataset_id: str, column_name: str) -> dict[str, Any]:
 
     stored_dataset = get_stored_dataset(dataset_id)
     frame = stored_dataset.frame
+    profile = build_column_profile_for_frame(frame, column_name)
+    cache.columns[column_name] = profile
+    return profile
+
+
+def build_column_profile_for_frame(
+    frame: pd.DataFrame,
+    column_name: str,
+    explorer_category: str | None = None,
+) -> dict[str, Any]:
     if column_name not in frame.columns:
         raise HTTPException(status_code=404, detail=f"Column {column_name} was not found.")
 
@@ -89,12 +99,26 @@ def build_column_profile(dataset_id: str, column_name: str) -> dict[str, Any]:
         "name": column_name,
         "type": data_type,
         "category": category,
+        "explorerCategory": explorer_category,
+        "rowCount": int(series.shape[0]),
         "distinctValues": int(series.nunique(dropna=True)),
         "nullCount": int(series.isna().sum()),
         "topValues": _top_values(series),
     }
 
-    if category == "Measure":
+    if explorer_category == "TYPE_VARIANT":
+        profile = {
+            **base_profile,
+            "topValues": _top_frequencies(series, limit=20),
+            "topFrequencies": _top_frequencies(series, limit=20),
+        }
+    elif explorer_category == "TIME_PERIOD":
+        profile = {**base_profile, **_time_period_profile(series, data_type)}
+    elif explorer_category == "AMOUNT":
+        profile = {**base_profile, **_numeric_profile(series)}
+    elif explorer_category == "IDENTIFIER":
+        profile = {**base_profile, **_identifier_profile(series)}
+    elif category == "Measure":
         profile = {**base_profile, **_numeric_profile(series)}
     elif category == "Date":
         profile = {**base_profile, **_date_profile(series)}
@@ -106,7 +130,6 @@ def build_column_profile(dataset_id: str, column_name: str) -> dict[str, Any]:
             "topFrequencies": _top_frequencies(series),
         }
 
-    cache.columns[column_name] = profile
     return profile
 
 
@@ -151,14 +174,18 @@ def _numeric_profile(series: pd.Series) -> dict[str, Any]:
 
 def _identifier_profile(series: pd.Series) -> dict[str, Any]:
     total = int(series.shape[0])
-    non_null_total = int(series.dropna().shape[0])
-    distinct_count = int(series.nunique(dropna=True))
-    unique_percentage = 0 if non_null_total == 0 else (distinct_count / non_null_total) * 100
+    value_counts = series.dropna().astype(str).value_counts()
+    non_null_total = int(value_counts.sum())
+    unique_count = int((value_counts == 1).sum())
+    duplicate_count = int(non_null_total - unique_count)
+    unique_percentage = 0 if non_null_total == 0 else (unique_count / non_null_total) * 100
 
     return {
+        "uniqueValues": unique_count,
+        "duplicateValues": duplicate_count,
         "uniquePercentage": round(unique_percentage, 2),
         "duplicatePercentage": round(max(0, 100 - unique_percentage), 2) if total else 0,
-        "mostFrequentIds": _top_values(series),
+        "mostFrequentIds": _top_frequencies(series, limit=10),
     }
 
 
@@ -185,23 +212,49 @@ def _date_profile(series: pd.Series) -> dict[str, Any]:
     }
 
 
-def _top_values(series: pd.Series) -> list[dict[str, Any]]:
-    value_counts = series.dropna().astype(str).value_counts().head(TOP_VALUE_LIMIT)
-    return [{"value": str(value), "count": int(count)} for value, count in value_counts.items()]
+def _time_period_profile(series: pd.Series, data_type: str) -> dict[str, Any]:
+    if data_type == "Date":
+        return _date_profile(series)
+
+    year_values = pd.to_numeric(
+        series.dropna().astype(str).map(_normalise_numeric_text),
+        errors="coerce",
+    ).dropna()
+    if year_values.empty:
+        return {
+            "earliestDate": None,
+            "latestDate": None,
+            "dateRange": None,
+            "timelineDistribution": [],
+        }
+
+    year_values = year_values.astype(int)
+    earliest_year = int(year_values.min())
+    latest_year = int(year_values.max())
+    return {
+        "earliestDate": str(earliest_year),
+        "latestDate": str(latest_year),
+        "dateRange": f"{earliest_year} - {latest_year}",
+        "timelineDistribution": _year_distribution(year_values),
+    }
 
 
-def _top_frequencies(series: pd.Series) -> list[dict[str, Any]]:
+def _top_values(series: pd.Series, limit: int = TOP_VALUE_LIMIT) -> list[dict[str, Any]]:
+    return _top_frequencies(series, limit=limit)
+
+
+def _top_frequencies(series: pd.Series, limit: int = TOP_VALUE_LIMIT) -> list[dict[str, Any]]:
     total = int(series.dropna().shape[0])
     if total == 0:
         return []
 
     return [
         {
-            "value": item["value"],
-            "count": item["count"],
-            "percentage": round((item["count"] / total) * 100, 2),
+            "value": str(value),
+            "count": int(count),
+            "percentage": round((int(count) / total) * 100, 2),
         }
-        for item in _top_values(series)
+        for value, count in series.dropna().astype(str).value_counts().head(limit).items()
     ]
 
 
@@ -235,6 +288,19 @@ def _date_distribution(values: pd.Series) -> list[dict[str, Any]]:
             "percentage": round((int(count) / total) * 100, 2) if total else 0,
         }
         for label, count in month_counts.items()
+    ]
+
+
+def _year_distribution(values: pd.Series) -> list[dict[str, Any]]:
+    total = len(values.index)
+    year_counts = values.value_counts().sort_index()
+    return [
+        {
+            "label": str(int(label)),
+            "count": int(count),
+            "percentage": round((int(count) / total) * 100, 2) if total else 0,
+        }
+        for label, count in year_counts.items()
     ]
 
 
