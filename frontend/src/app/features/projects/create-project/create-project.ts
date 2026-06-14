@@ -125,7 +125,7 @@ export class CreateProject implements OnInit, AfterViewInit {
 
           if (action === 'discard') {
             if (this.draftId) {
-              this.projectSelection.deleteProject(this.draftId);
+              this.projectSelection.deleteLocalProject(this.draftId);
             }
             this.allowNavigation = true;
             return true;
@@ -285,18 +285,35 @@ export class CreateProject implements OnInit, AfterViewInit {
     }
 
     if (this.draftId) {
-      this.projectSelection.activateDraft(
-        this.draftId,
-        this.projectName.trim(),
-        this.description.trim(),
-        this.importPreview,
-      );
+      this.projectSelection
+        .activateDraft(
+          this.draftId,
+          this.projectName.trim(),
+          this.description.trim(),
+          this.importPreview,
+        )
+        .subscribe({
+          next: () => {
+            this.allowNavigation = true;
+            this.router.navigate(['/projects']);
+          },
+          error: (error: HttpErrorResponse) => {
+            this.validationError = this.readErrorMessage(error);
+          },
+        });
     } else {
-      this.projectSelection.createProject(this.projectName.trim(), this.description.trim(), this.importPreview);
+      this.projectSelection
+        .createProject(this.projectName.trim(), this.description.trim(), this.importPreview)
+        .subscribe({
+          next: () => {
+            this.allowNavigation = true;
+            this.router.navigate(['/projects']);
+          },
+          error: (error: HttpErrorResponse) => {
+            this.validationError = this.readErrorMessage(error);
+          },
+        });
     }
-
-    this.allowNavigation = true;
-    this.router.navigate(['/projects']);
   }
 
   protected formatSize(size: number): string {

@@ -1,4 +1,6 @@
-import { Injectable, signal } from '@angular/core';
+import { HttpClient } from '@angular/common/http';
+import { Injectable, inject, signal } from '@angular/core';
+import { Observable, map, tap } from 'rxjs';
 
 import {
   DatasetFileType,
@@ -49,72 +51,58 @@ export type ProjectDraft = {
   importPreview: ImportPreview | null;
 };
 
+type PersistedProject = {
+  id: string;
+  name: string;
+  description: string;
+  createdAt?: string;
+  updatedAt?: string;
+  status: ProjectStatus;
+  state: ProjectState;
+  datasetMetadata?: ProjectDatasetMetadata | null;
+};
+
 @Injectable({ providedIn: 'root' })
 export class ProjectSelection {
-  private readonly projectsSignal = signal<Project[]>([
-    {
-      id: 'financial-review-workspace',
-      name: 'Financial Review Workspace',
-      description: 'Review imported financial exports for completeness and anomalies.',
-      rows: '42.8M rows',
-      status: 'Healthy',
-      state: 'Active',
-      tone: 'ok',
-    },
-    {
-      id: 'vendor-analysis',
-      name: 'Vendor Analysis',
-      description: 'Analyze vendor-related structured exports.',
-      rows: '9.4M rows',
-      status: 'Warning',
-      state: 'Active',
-      tone: 'warn',
-    },
-    {
-      id: 'audit-sampling-2026',
-      name: 'Audit Sampling 2026',
-      description: 'Prepare high-volume audit samples.',
-      rows: '128M rows',
-      status: 'Error',
-      state: 'Active',
-      tone: 'error',
-    },
-  ]);
+  private readonly http = inject(HttpClient);
+  private readonly apiBaseUrl = 'http://127.0.0.1:8000';
+  private readonly activeProjectStorageKey = 'analytica.activeProjectId';
+  private readonly projectsSignal = signal<Project[]>([]);
 
   readonly projects = this.projectsSignal.asReadonly();
   readonly activeProject = signal<Project | null>(null);
 
-  createProject(projectName: string, description: string, importPreview?: ImportPreview): Project {
+  constructor() {
+    this.loadProjects();
+  }
+
+  loadProjects(): void {
+    this.http
+      .get<PersistedProject[]>(`${this.apiBaseUrl}/projects`)
+      .pipe(map((projects) => projects.map((project) => this.mapPersistedProject(project))))
+      .subscribe({
+        next: (projects) => {
+          this.projectsSignal.set(projects);
+          this.restoreActiveProject(projects);
+        },
+      });
+  }
+
+  createProject(projectName: string, description: string, importPreview?: ImportPreview): Observable<Project> {
     this.assertUniqueProjectName(projectName);
 
-    const projectCount = this.projects().length;
-    const rowCount = importPreview?.rowCount;
-    const project: Project = {
-      id: `${Date.now()}-${projectName.toLowerCase().replace(/[^a-z0-9]+/g, '-')}`,
-      name: projectName,
-      description,
-      createdAt: new Date().toISOString(),
-      rows: rowCount === undefined ? `${((projectCount + 1) * 8.6).toFixed(1)}M rows` : `${rowCount.toLocaleString()} rows`,
-      status: 'Healthy',
-      state: 'Active',
-      tone: 'ok',
-      datasetMetadata: importPreview
-        ? {
-            datasetId: importPreview.datasetId,
-            fileCount: importPreview.fileCount,
-            rowCount: importPreview.rowCount,
-            columnCount: importPreview.columnCount,
-            datasetType: importPreview.datasetType,
-            datasetSize: importPreview.datasetSize,
-          }
-        : undefined,
-      schema: importPreview?.schema,
-      datasetPreview: importPreview?.preview,
-      importedFiles: importPreview?.files,
-    };
-
-    this.projectsSignal.update((projects) => [...projects, project]);
-    return project;
+    return this.http
+      .post<PersistedProject>(`${this.apiBaseUrl}/projects`, {
+        name: projectName,
+        description,
+        datasetId: importPreview?.datasetId ?? null,
+      })
+      .pipe(
+        map((project) => this.mapPersistedProject(project, importPreview)),
+        tap((project) => {
+          this.projectsSignal.update((projects) => [project, ...projects]);
+        }),
+      );
   }
 
   saveDraft(draft: ProjectDraft, draftId?: string): Project {
@@ -163,44 +151,64 @@ export class ProjectSelection {
     return this.projects().find((project) => project.id === projectId);
   }
 
-  activateDraft(projectId: string, projectName: string, description: string, importPreview: ImportPreview): Project {
+  activateDraft(
+    projectId: string,
+    projectName: string,
+    description: string,
+    importPreview: ImportPreview,
+  ): Observable<Project> {
     this.assertUniqueProjectName(projectName, projectId);
 
-    const project: Project = {
-      ...this.createProjectShape(projectId, projectName, description, importPreview),
-    };
-
-    this.projectsSignal.update((projects) =>
-      projects.map((item) => (item.id === projectId ? project : item)),
-    );
-    return project;
+    return this.http
+      .post<PersistedProject>(`${this.apiBaseUrl}/projects`, {
+        name: projectName,
+        description,
+        datasetId: importPreview.datasetId,
+      })
+      .pipe(
+        map((project) => this.mapPersistedProject(project, importPreview)),
+        tap((project) => {
+          this.projectsSignal.update((projects) =>
+            projects.map((item) => (item.id === projectId ? project : item)),
+          );
+        }),
+      );
   }
 
   selectProject(project: Project): void {
     this.activeProject.set(project);
+    localStorage.setItem(this.activeProjectStorageKey, project.id);
   }
 
-  renameProject(projectId: string, projectName: string): void {
+  renameProject(projectId: string, projectName: string): Observable<Project> {
     this.assertUniqueProjectName(projectName, projectId);
 
-    this.projectsSignal.update((projects) =>
-      projects.map((project) =>
-        project.id === projectId ? { ...project, name: projectName } : project,
-      ),
-    );
+    return this.http
+      .patch<PersistedProject>(`${this.apiBaseUrl}/projects/${projectId}`, { name: projectName })
+      .pipe(
+        map((project) => this.mapPersistedProject(project)),
+        tap((updatedProject) => {
+          this.projectsSignal.update((projects) =>
+            projects.map((project) => (project.id === projectId ? updatedProject : project)),
+          );
 
-    const activeProject = this.activeProject();
-    if (activeProject?.id === projectId) {
-      this.activeProject.set(this.projects().find((project) => project.id === projectId) ?? null);
-    }
+          if (this.activeProject()?.id === projectId) {
+            this.activeProject.set(updatedProject);
+          }
+        }),
+      );
   }
 
-  deleteProject(projectId: string): void {
-    this.projectsSignal.update((projects) => projects.filter((project) => project.id !== projectId));
+  deleteProject(projectId: string): Observable<void> {
+    return this.http.delete<void>(`${this.apiBaseUrl}/projects/${projectId}`).pipe(
+      tap(() => {
+        this.removeProjectFromState(projectId);
+      }),
+    );
+  }
 
-    if (this.activeProject()?.id === projectId) {
-      this.activeProject.set(null);
-    }
+  deleteLocalProject(projectId: string): void {
+    this.removeProjectFromState(projectId);
   }
 
   isProjectNameTaken(projectName: string, excludeProjectId?: string): boolean {
@@ -239,32 +247,63 @@ export class ProjectSelection {
     return projectName.trim().toLowerCase();
   }
 
-  private createProjectShape(
-    projectId: string,
-    projectName: string,
-    description: string,
-    importPreview: ImportPreview,
-  ): Project {
+  private mapPersistedProject(project: PersistedProject, importPreview?: ImportPreview): Project {
+    const datasetMetadata = project.datasetMetadata ?? undefined;
+
     return {
-      id: projectId,
-      name: projectName,
-      description,
-      createdAt: new Date().toISOString(),
-      rows: `${importPreview.rowCount.toLocaleString()} rows`,
-      status: 'Healthy',
-      state: 'Active',
-      tone: 'ok',
-      datasetMetadata: {
-        datasetId: importPreview.datasetId,
-        fileCount: importPreview.fileCount,
-        rowCount: importPreview.rowCount,
-        columnCount: importPreview.columnCount,
-        datasetType: importPreview.datasetType,
-        datasetSize: importPreview.datasetSize,
-      },
-      schema: importPreview.schema,
-      datasetPreview: importPreview.preview,
-      importedFiles: importPreview.files,
+      id: project.id,
+      name: project.name,
+      description: project.description,
+      createdAt: project.createdAt,
+      rows: datasetMetadata ? `${datasetMetadata.rowCount.toLocaleString()} rows` : 'No dataset',
+      status: project.status,
+      state: project.state,
+      tone: this.projectTone(project.status, project.state),
+      datasetMetadata,
+      schema: importPreview?.schema,
+      datasetPreview: importPreview?.preview,
+      importedFiles: importPreview?.files,
     };
+  }
+
+  private projectTone(status: ProjectStatus, state: ProjectState): Project['tone'] {
+    if (state === 'Draft') {
+      return 'draft';
+    }
+
+    if (status === 'Warning') {
+      return 'warn';
+    }
+
+    if (status === 'Error') {
+      return 'error';
+    }
+
+    return 'ok';
+  }
+
+  private restoreActiveProject(projects: Project[]): void {
+    const activeProjectId = localStorage.getItem(this.activeProjectStorageKey);
+    if (!activeProjectId) {
+      return;
+    }
+
+    const activeProject = projects.find((project) => project.id === activeProjectId);
+    if (activeProject) {
+      this.activeProject.set(activeProject);
+      return;
+    }
+
+    localStorage.removeItem(this.activeProjectStorageKey);
+    this.activeProject.set(null);
+  }
+
+  private removeProjectFromState(projectId: string): void {
+    this.projectsSignal.update((projects) => projects.filter((project) => project.id !== projectId));
+
+    if (this.activeProject()?.id === projectId) {
+      this.activeProject.set(null);
+      localStorage.removeItem(this.activeProjectStorageKey);
+    }
   }
 }

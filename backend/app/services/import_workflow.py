@@ -11,6 +11,8 @@ from uuid import uuid4
 import pandas as pd
 from fastapi import HTTPException, UploadFile
 
+from app.services.dataset_storage import load_dataset, persist_dataset
+
 
 logger = logging.getLogger(__name__)
 
@@ -85,16 +87,27 @@ async def build_import_preview(
         for file_payload in file_payloads
     ]
     dataset_id = uuid4().hex
+    schema = _detect_schema(dataset, [file_payload["name"] for file_payload in file_payloads])
+    dataset_size = int(sum(file_payload["size"] for file_payload in file_payloads))
+    table_name = persist_dataset(
+        dataset_id=dataset_id,
+        frame=dataset,
+        dataset_type=dataset_type,
+        files=imported_files,
+        schema=schema,
+        dataset_size=dataset_size,
+    )
     DATASET_REGISTRY[dataset_id] = StoredDataset(
         frame=dataset,
         dataset_type=dataset_type,
         files=imported_files,
     )
-    schema = _detect_schema(dataset, [file_payload["name"] for file_payload in file_payloads])
     preview_columns = list(dataset.columns[:PREVIEW_COLUMN_LIMIT])
 
     logger.info(
-        "Import preview generated: dataset_type=%s file_count=%s row_count=%s column_count=%s columns=%s",
+        "Import preview generated: dataset_id=%s table_name=%s dataset_type=%s file_count=%s row_count=%s column_count=%s columns=%s",
+        dataset_id,
+        table_name,
         dataset_type,
         len(file_payloads),
         len(dataset.index),
@@ -108,7 +121,7 @@ async def build_import_preview(
         "fileCount": len(file_payloads),
         "rowCount": int(len(dataset.index)),
         "columnCount": int(len(dataset.columns)),
-        "datasetSize": int(sum(file_payload["size"] for file_payload in file_payloads)),
+        "datasetSize": dataset_size,
         "files": imported_files,
         "schema": schema,
         "preview": {
@@ -276,8 +289,16 @@ def _validate_shared_schema(frames: list[pd.DataFrame], filenames: list[str]) ->
 
 def get_stored_dataset(dataset_id: str) -> StoredDataset:
     dataset = DATASET_REGISTRY.get(dataset_id)
-    if dataset is None:
-        raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} was not found in memory.")
+    if dataset is not None:
+        return dataset
+
+    stored_dataset = load_dataset(dataset_id)
+    if stored_dataset is None:
+        raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} was not found.")
+
+    frame, dataset_type, files = stored_dataset
+    dataset = StoredDataset(frame=frame, dataset_type=dataset_type, files=files)
+    DATASET_REGISTRY[dataset_id] = dataset
     return dataset
 
 

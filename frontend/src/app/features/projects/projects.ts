@@ -103,7 +103,7 @@ export class Projects {
         }
 
         if (!this.projectSelection.isProjectNameTaken(projectName, project.id)) {
-          this.projectSelection.renameProject(project.id, projectName);
+          this.projectSelection.renameProject(project.id, projectName).subscribe();
         }
       });
   }
@@ -123,11 +123,13 @@ export class Projects {
         }
 
         const deletedActiveProject = this.projectSelection.activeProject()?.id === project.id;
-        this.projectSelection.deleteProject(project.id);
-
-        if (deletedActiveProject) {
-          this.router.navigate(['/projects']);
-        }
+        this.projectSelection.deleteProject(project.id).subscribe({
+          next: () => {
+            if (deletedActiveProject) {
+              this.router.navigate(['/projects']);
+            }
+          },
+        });
       });
   }
 }
