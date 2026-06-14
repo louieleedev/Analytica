@@ -4,6 +4,8 @@ import { Injectable, inject } from '@angular/core';
 import {
   ApplicationSettings,
   ApplicationSettingsResponse,
+  ChartRequest,
+  ChartResult,
   ColumnProfile,
   DatasetFileType,
   ExplorerDataset,
@@ -75,6 +77,10 @@ export class ImportApi {
 
   estimatePivot(datasetId: string, payload: PivotRequest) {
     return this.http.post<PivotEstimate>(`${this.apiBaseUrl}/datasets/${datasetId}/pivot/estimate`, payload);
+  }
+
+  createChart(datasetId: string, payload: ChartRequest) {
+    return this.http.post<ChartResult>(`${this.apiBaseUrl}/datasets/${datasetId}/charts`, payload);
   }
 
   getSettings() {

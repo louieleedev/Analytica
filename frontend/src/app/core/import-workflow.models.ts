@@ -236,6 +236,50 @@ export type PivotResult = {
   };
 };
 
+export type ChartType = 'bar' | 'pie' | 'line';
+export type ChartAggregation = 'Sum' | 'Count' | 'Average' | 'Min' | 'Max';
+export type ChartSortOrder = 'none' | 'ascending' | 'descending';
+
+export type ChartRequest = {
+  chartType: ChartType;
+  categoryField: string;
+  seriesField?: string | null;
+  valueField: string;
+  aggregation: ChartAggregation;
+  sortOrder: ChartSortOrder;
+  topN?: number | null;
+  chartTitle?: string | null;
+  filters: ExplorerFilterPayload[];
+};
+
+export type ChartPoint = {
+  category: string;
+  value: number;
+};
+
+export type ChartResult = {
+  datasetId: string;
+  chartType: ChartType;
+  categoryField: string;
+  seriesField?: string | null;
+  valueField: string;
+  aggregation: ChartAggregation;
+  sortOrder: ChartSortOrder;
+  topN?: number | null;
+  title: string;
+  metricLabel: string;
+  points: ChartPoint[];
+  series?: {
+    name: string;
+    points: ChartPoint[];
+  }[];
+  categories?: string[];
+  seriesNames?: string[];
+  pointCount: number;
+  limit: number;
+  sql?: string;
+};
+
 export type ApplicationSettings = {
   pivot_max_rows: number;
   table_density: string;

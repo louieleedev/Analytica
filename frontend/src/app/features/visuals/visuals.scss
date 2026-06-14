@@ -1,0 +1,229 @@
+.visuals-workbench {
+  display: grid;
+  grid-template-columns: 320px minmax(0, 1fr);
+  gap: 16px;
+}
+
+.visuals-config-panel {
+  align-self: start;
+}
+
+.visual-control {
+  display: grid;
+  gap: 7px;
+  margin: 16px 18px;
+}
+
+.visual-control span {
+  color: #344054;
+  font-size: 13px;
+  font-weight: 700;
+}
+
+.visual-control input,
+.visual-control select {
+  width: 100%;
+  min-height: 40px;
+  padding: 8px 10px;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #344054;
+  font: inherit;
+}
+
+.visual-control small {
+  color: #667085;
+  font-size: 12px;
+}
+
+.visuals-config-panel button {
+  margin: 2px 18px 18px;
+}
+
+.visuals-chart-panel {
+  min-width: 0;
+  overflow: hidden;
+}
+
+.visual-chart-summary {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid #eef3f8;
+  color: #667085;
+  font-size: 13px;
+}
+
+.visual-chart-title {
+  padding: 16px 18px 0;
+}
+
+.visual-chart-title h2 {
+  margin: 0;
+  color: #182230;
+  font-size: 18px;
+  font-weight: 750;
+}
+
+.visual-chart-summary strong {
+  color: #182230;
+}
+
+.visual-bar-chart,
+.visual-pie-layout,
+.visual-line-chart {
+  padding: 18px;
+}
+
+.visual-bar-chart {
+  display: grid;
+  gap: 10px;
+}
+
+.visual-series-chart {
+  display: grid;
+  gap: 16px;
+  padding: 18px;
+}
+
+.visual-series-group {
+  display: grid;
+  gap: 8px;
+  padding-bottom: 12px;
+  border-bottom: 1px solid #eef3f8;
+}
+
+.visual-series-group h3 {
+  margin: 0;
+  color: #182230;
+  font-size: 13px;
+  font-weight: 750;
+}
+
+.visual-bar-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 180px) minmax(0, 1fr) 90px;
+  align-items: center;
+  gap: 10px;
+  color: #344054;
+  font-size: 13px;
+}
+
+.visual-bar-row div {
+  height: 24px;
+  overflow: hidden;
+  border-radius: 6px;
+  background: #edf4ff;
+}
+
+.visual-bar-row strong {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: #2f7df6;
+}
+
+.visual-bar-row em {
+  justify-self: end;
+  color: #667085;
+  font-style: normal;
+  font-weight: 700;
+}
+
+.visual-pie-layout {
+  display: grid;
+  grid-template-columns: 280px minmax(0, 1fr);
+  align-items: center;
+  gap: 24px;
+}
+
+.visual-pie-chart {
+  width: 260px;
+  max-width: 100%;
+  transform: rotate(-90deg);
+}
+
+.visual-pie-chart circle {
+  fill: transparent;
+  stroke-width: 8;
+}
+
+.visual-legend {
+  display: grid;
+  gap: 10px;
+}
+
+.visual-legend.compact {
+  display: flex;
+  flex-wrap: wrap;
+  padding: 0 18px 18px;
+}
+
+.visual-legend div {
+  display: grid;
+  grid-template-columns: 12px minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 9px;
+  color: #344054;
+  font-size: 13px;
+}
+
+.visual-legend.compact div {
+  grid-template-columns: 12px auto;
+}
+
+.visual-legend i {
+  width: 12px;
+  height: 12px;
+  border-radius: 999px;
+}
+
+.visual-line-chart svg {
+  width: 100%;
+  height: 320px;
+  padding: 18px 0;
+  overflow: visible;
+  border-bottom: 1px solid #d9e0eb;
+  border-left: 1px solid #d9e0eb;
+}
+
+.visual-line-chart polyline {
+  fill: none;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 3;
+}
+
+.visual-line-labels {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  overflow: hidden;
+  color: #667085;
+  font-size: 11px;
+}
+
+.visual-empty-state {
+  display: grid;
+  min-height: 360px;
+  place-items: center;
+  align-content: center;
+  gap: 10px;
+  padding: 24px;
+  color: #667085;
+  text-align: center;
+}
+
+.visual-empty-state mat-icon {
+  color: #2f7df6;
+  font-size: 34px;
+}
+
+@media (max-width: 1100px) {
+  .visuals-workbench,
+  .visual-pie-layout {
+    grid-template-columns: 1fr;
+  }
+}

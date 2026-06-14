@@ -2101,22 +2101,6 @@ table {
   font-weight: 650;
 }
 
-.visual-card {
-  min-height: 260px;
-}
-
-.chart-skeleton {
-  height: 132px;
-  margin-top: 18px;
-  border-radius: 8px;
-  background:
-    linear-gradient(90deg, #2f7df6 16%, transparent 16% 24%, #9bc5ff 24% 44%, transparent 44% 52%, #66a3ff 52% 72%, transparent 72%),
-    linear-gradient(#eef4ff, #eef4ff);
-  background-size: 100% 78%, 100% 100%;
-  background-position: left bottom;
-  background-repeat: no-repeat;
-}
-
 .report-layout {
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 1px;

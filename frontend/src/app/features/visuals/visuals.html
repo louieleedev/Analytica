@@ -3,17 +3,265 @@
     <div>
       <p class="eyebrow">Current Project</p>
       <h1>Visuals</h1>
-      <p class="lede">Simple chart placeholders for analysis results.</p>
+      <p class="lede">Generate simple charts directly from the active dataset.</p>
     </div>
   </div>
 
-  <div class="project-grid">
-    @for (chart of charts; track chart.title) {
-      <article class="panel visual-card">
-        <mat-icon>{{ chart.icon }}</mat-icon>
-        <h2>{{ chart.title }}</h2>
-        <div class="chart-skeleton"></div>
-      </article>
-    }
-  </div>
+  @if (!activeDatasetId()) {
+    <section class="panel empty-project-state">
+      <mat-icon>info</mat-icon>
+      <h2>Visuals unavailable</h2>
+      <p>Open a project created from uploaded files to build visuals.</p>
+    </section>
+  } @else if (errorMessage()) {
+    <section class="panel empty-project-state">
+      <mat-icon>info</mat-icon>
+      <h2>Visuals unavailable</h2>
+      <p>{{ errorMessage() }}</p>
+    </section>
+  } @else if (isDatasetLoading()) {
+    <section class="panel loading-state">
+      <mat-spinner diameter="36"></mat-spinner>
+      <span>Loading dataset fields...</span>
+    </section>
+  } @else {
+    <div class="visuals-workbench">
+      <aside class="panel visuals-config-panel">
+        <div class="panel-heading">
+          <h2>Chart Configuration</h2>
+          <span>DuckDB source</span>
+        </div>
+
+        <label class="visual-control">
+          <span>Chart Type</span>
+          <select [value]="chartType" (change)="updateChartType($event)">
+            @for (type of chartTypes; track type.value) {
+              <option [value]="type.value">{{ type.label }}</option>
+            }
+          </select>
+        </label>
+
+        <label class="visual-control">
+          <span>Chart Title</span>
+          <input
+            type="text"
+            [value]="chartTitle"
+            placeholder="Auto-generated when empty"
+            (input)="updateChartTitle($event)"
+          />
+        </label>
+
+        <label class="visual-control">
+          <span>Category Field</span>
+          <select [value]="categoryField" (change)="updateCategoryField($event)">
+            @for (column of columns(); track column.name) {
+              <option [value]="column.name">{{ column.name }}</option>
+            }
+          </select>
+        </label>
+
+        <label class="visual-control">
+          <span>Series Field</span>
+          <select
+            [value]="seriesField"
+            [disabled]="chartType === 'pie'"
+            (change)="updateSeriesField($event)"
+          >
+            <option value="">None</option>
+            @for (column of columns(); track column.name) {
+              <option [value]="column.name">{{ column.name }}</option>
+            }
+          </select>
+          @if (chartType === 'pie') {
+            <small>Pie charts use a single series.</small>
+          }
+        </label>
+
+        <label class="visual-control">
+          <span>Value Field</span>
+          <select [value]="valueField" (change)="updateValueField($event)">
+            @for (column of numericColumns(); track column.name) {
+              <option [value]="column.name">{{ column.name }}</option>
+            }
+          </select>
+        </label>
+
+        <label class="visual-control">
+          <span>Aggregation</span>
+          <select [value]="aggregation" (change)="updateAggregation($event)">
+            @for (item of aggregations; track item) {
+              <option [value]="item">{{ item }}</option>
+            }
+          </select>
+        </label>
+
+        <label class="visual-control">
+          <span>Sorting</span>
+          <select [value]="sortOrder" (change)="updateSortOrder($event)">
+            @for (item of sortOptions; track item.value) {
+              <option [value]="item.value">{{ item.label }}</option>
+            }
+          </select>
+        </label>
+
+        <label class="visual-control">
+          <span>Top N</span>
+          <select [value]="topNMode" (change)="updateTopNMode($event)">
+            @for (item of topNOptions; track item.value) {
+              <option [value]="item.value">{{ item.label }}</option>
+            }
+          </select>
+        </label>
+
+        @if (topNMode === 'custom') {
+          <label class="visual-control">
+            <span>Custom Top N</span>
+            <input type="number" min="1" [value]="customTopN" (input)="updateCustomTopN($event)" />
+          </label>
+        }
+
+        <button mat-flat-button type="button" [disabled]="!canApplyChart()" (click)="applyChart()">
+          Apply Chart
+        </button>
+      </aside>
+
+      <section class="panel visuals-chart-panel">
+        <div class="panel-heading">
+          <h2>Chart Preview</h2>
+          @if (chartResult(); as result) {
+            <span>
+              Groups: {{ result.pointCount }} | Aggregation: {{ result.aggregation }} | Top N:
+              {{ topNLabel(result) }}
+            </span>
+          } @else {
+            <span>Configure and apply a chart</span>
+          }
+        </div>
+
+        @if (isChartLoading()) {
+          <div class="loading-state">
+            <mat-spinner diameter="36"></mat-spinner>
+            <span>Generating chart with DuckDB...</span>
+          </div>
+        } @else if (chartResult(); as result) {
+          <div class="visual-chart-title">
+            <h2>{{ result.title }}</h2>
+          </div>
+          <div class="visual-chart-summary">
+            <strong>{{ result.metricLabel }}</strong>
+            <span>
+              Grouped by {{ result.categoryField }}
+              @if (result.seriesField) {
+                and {{ result.seriesField }}
+              }
+            </span>
+          </div>
+
+          @if (result.chartType === 'bar') {
+            @if (hasSeries()) {
+              <div class="visual-series-chart">
+                @for (category of result.categories ?? []; track category; let categoryIndex = $index) {
+                  <section class="visual-series-group">
+                    <h3>{{ formatShortLabel(category) }}</h3>
+                    @for (series of result.series ?? []; track series.name; let seriesIndex = $index) {
+                      <div class="visual-bar-row">
+                        <span>{{ formatShortLabel(series.name) }}</span>
+                        <div>
+                          <strong
+                            [style.width.%]="maxChartValue() > 0 ? (series.points[categoryIndex]?.value ?? 0) / maxChartValue() * 100 : 0"
+                            [style.background]="palette[seriesIndex % palette.length]"
+                          ></strong>
+                        </div>
+                        <em>{{ formatValue(series.points[categoryIndex]?.value ?? 0) }}</em>
+                      </div>
+                    }
+                  </section>
+                }
+              </div>
+            } @else {
+              <div class="visual-bar-chart">
+                @for (point of barPoints(); track point.category) {
+                  <div class="visual-bar-row">
+                    <span>{{ formatShortLabel(point.category) }}</span>
+                    <div>
+                      <strong [style.width.%]="point.width"></strong>
+                    </div>
+                    <em>{{ formatValue(point.value) }}</em>
+                  </div>
+                }
+              </div>
+            }
+          }
+
+          @if (hasSeries() && result.chartType !== 'pie') {
+            <div class="visual-legend compact">
+              @for (series of result.series ?? []; track series.name; let seriesIndex = $index) {
+                <div>
+                  <i [style.background]="palette[seriesIndex % palette.length]"></i>
+                  <span>{{ formatShortLabel(series.name) }}</span>
+                </div>
+              }
+            </div>
+          }
+
+          @if (result.chartType === 'pie') {
+            <div class="visual-pie-layout">
+              <svg viewBox="0 0 42 42" class="visual-pie-chart" role="img">
+                @for (slice of pieSlices(); track slice.category) {
+                  <circle
+                    r="15.915"
+                    cx="21"
+                    cy="21"
+                    [attr.stroke]="slice.color"
+                    [attr.stroke-dasharray]="slice.dashArray"
+                    [attr.stroke-dashoffset]="slice.dashOffset"
+                  ></circle>
+                }
+              </svg>
+              <div class="visual-legend">
+                @for (slice of pieSlices(); track slice.category) {
+                  <div>
+                    <i [style.background]="slice.color"></i>
+                    <span>{{ formatShortLabel(slice.category) }}</span>
+                    <strong>{{ formatValue(slice.value) }}</strong>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+          @if (result.chartType === 'line') {
+            <div class="visual-line-chart">
+              <svg viewBox="0 0 620 300" preserveAspectRatio="none" role="img">
+                @if (hasSeries()) {
+                  @for (line of seriesLines(); track line.name) {
+                    <polyline [attr.points]="line.points" [style.stroke]="line.color" />
+                  }
+                } @else {
+                  <polyline [attr.points]="linePolyline()" [style.stroke]="palette[0]" />
+                }
+              </svg>
+              <div class="visual-line-labels">
+                @if (hasSeries()) {
+                  @for (category of result.categories ?? []; track category) {
+                    <span>{{ formatShortLabel(category) }}</span>
+                  }
+                } @else {
+                  @for (point of result.points; track point.category) {
+                    <span>{{ formatShortLabel(point.category) }}</span>
+                  }
+                }
+              </div>
+            </div>
+          }
+        } @else {
+          <div class="visual-empty-state">
+            <mat-icon>insert_chart</mat-icon>
+            <h2>Configure a chart</h2>
+            <p>Select a chart type, category field, value field and aggregation.</p>
+          </div>
+        }
+      </section>
+    </div>
+  }
 </section>

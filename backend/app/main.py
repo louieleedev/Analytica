@@ -5,6 +5,7 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.services.chart_service import build_chart_result
 from app.services.application_settings import (
     get_application_settings,
     initialise_application_settings,
@@ -138,6 +139,10 @@ def create_app() -> FastAPI:
     @app.post("/datasets/{dataset_id}/pivot/estimate", tags=["datasets"])
     def dataset_pivot_estimate(dataset_id: str, payload: dict) -> dict:
         return estimate_pivot(dataset_id, payload)
+
+    @app.post("/datasets/{dataset_id}/charts", tags=["datasets"])
+    def dataset_chart(dataset_id: str, payload: dict) -> dict:
+        return build_chart_result(dataset_id, payload)
 
     return app
 

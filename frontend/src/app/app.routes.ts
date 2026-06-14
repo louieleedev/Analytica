@@ -10,7 +10,6 @@ import { canDeactivateCreateProject } from './features/projects/create-project/c
 import { Projects } from './features/projects/projects';
 import { Reports } from './features/reports/reports';
 import { Settings } from './features/settings/settings';
-import { Visuals } from './features/visuals/visuals';
 
 export const routes: Routes = [
   {
@@ -34,7 +33,11 @@ export const routes: Routes = [
       { path: 'project/datasets', component: Datasets, title: 'Datasets | Analytica' },
       { path: 'project/explorer', component: Explorer, title: 'Explorer | Analytica' },
       { path: 'project/pivot', component: Pivot, title: 'Pivot | Analytica' },
-      { path: 'project/visuals', component: Visuals, title: 'Visuals | Analytica' },
+      {
+        path: 'project/visuals',
+        loadComponent: () => import('./features/visuals/visuals').then((module) => module.Visuals),
+        title: 'Visuals | Analytica',
+      },
       { path: 'project/reports', component: Reports, title: 'Reports | Analytica' },
       { path: 'project/settings', redirectTo: '/settings' },
       { path: 'settings', component: Settings, title: 'Settings | Analytica' },
