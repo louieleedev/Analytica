@@ -1120,13 +1120,16 @@ table {
   display: grid;
   grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: 16px;
+  min-width: 0;
 }
 
 .pivot-drop-zone {
   display: grid;
+  min-width: 0;
   min-height: 184px;
   align-content: start;
   gap: 16px;
+  box-sizing: border-box;
   padding: 18px;
   border-style: dashed;
   background: #fbfdff;
@@ -1199,13 +1202,18 @@ table {
 .pivot-zone-fields {
   display: grid;
   gap: 10px;
+  min-width: 0;
 }
 
 .pivot-field-chip {
-  display: flex;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
   align-items: center;
   gap: 8px;
+  width: 100%;
+  min-width: 0;
   min-height: 42px;
+  box-sizing: border-box;
   padding: 9px 10px;
   border: 1px solid #bfd7ff;
   border-radius: 8px;
@@ -1213,19 +1221,101 @@ table {
   color: #1849a9;
   font-size: 13px;
   font-weight: 700;
+  user-select: none;
+  cursor: grab;
 }
 
-.pivot-field-chip > span {
+.pivot-field-chip:active {
+  cursor: grabbing;
+}
+
+.pivot-field-chip.value-field-chip {
+  row-gap: 10px;
+  align-items: stretch;
+  min-height: 88px;
+  padding: 10px;
+}
+
+.pivot-field-chip.filter-field-chip {
+  row-gap: 8px;
+}
+
+.pivot-item-card-header {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 8px;
+  width: 100%;
   min-width: 0;
-  flex: 1;
+}
+
+.pivot-field-name {
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
-.pivot-field-chip .mat-mdc-select {
-  min-width: 112px;
+.pivot-field-actions {
+  display: inline-flex;
+  align-items: center;
+  justify-self: end;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pivot-filter-value-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 26px;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.pivot-filter-summary {
+  min-width: 0;
+  overflow: hidden;
+  color: #475467;
   font-size: 12px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pivot-filter-edit {
+  color: #475467;
+}
+
+.pivot-filter-edit:hover {
+  background: #f2f6fb;
+  color: #1f6feb;
+}
+
+.pivot-field-chip .category-tag {
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.pivot-field-chip .mat-mdc-select {
+  width: 156px;
+  min-width: 0;
+  font-size: 12px;
+}
+
+.value-aggregation-control {
+  display: grid;
+  grid-template-columns: 1fr;
+  min-width: 0;
+  gap: 4px;
+  color: #475467;
+  font-size: 11px;
+  font-weight: 700;
+  user-select: none;
+}
+
+.value-aggregation-control > span {
+  color: #667085;
+  text-transform: uppercase;
 }
 
 .pivot-field-chip button {
@@ -1237,6 +1327,7 @@ table {
   flex: 0 0 auto;
   padding: 0;
   line-height: 1;
+  user-select: none;
 }
 
 .pivot-field-chip mat-icon {
@@ -1485,7 +1576,67 @@ table {
 }
 
 .field-list span {
+  box-sizing: border-box;
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) auto 28px;
+  justify-content: stretch;
+  border: 1px solid #d9e2ef;
+  background: #ffffff;
   color: #344054;
+  user-select: none;
+  cursor: grab;
+}
+
+.field-list span:hover {
+  border-color: #bfd7ff;
+  background: #f8fbff;
+}
+
+.field-list span:active {
+  cursor: grabbing;
+}
+
+.field-list span strong {
+  min-width: 0;
+  padding: 0;
+  overflow: hidden;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.field-list span .category-tag {
+  flex: 0 0 auto;
+  user-select: none;
+}
+
+.field-usage-badge {
+  display: inline-grid;
+  width: 24px;
+  height: 20px;
+  place-items: center;
+  padding: 0;
+  border: 1px solid #bfd7ff;
+  border-radius: 999px;
+  background: #e8f2ff;
+  color: #1849a9;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1;
+  user-select: none;
+}
+
+.field-usage-badge.empty {
+  border-color: #e4e7ec;
+  background: #f8fafc;
+  color: #98a2b3;
+}
+
+.field-panel-message {
+  margin: 0 14px 14px;
+  color: #667085;
+  font-size: 13px;
+  line-height: 1.45;
 }
 
 .field-list span.cdk-drag-preview,
@@ -1535,34 +1686,72 @@ table {
   overflow: hidden;
 }
 
-.dynamic-pivot-table .pivot-row {
-  min-width: 720px;
+.pivot-results.stale .pivot-table {
+  opacity: 0.45;
+  filter: grayscale(0.15);
+}
+
+.pivot-stale-message {
+  padding: 10px 18px;
+  border-top: 1px solid #eef3f8;
+  background: #f8fbff;
+  color: #667085;
+  font-size: 13px;
+  font-weight: 650;
 }
 
 .pivot-table {
   overflow-x: auto;
+  background: #ffffff;
 }
 
-.pivot-row {
+.pivot-grid-table {
   display: grid;
-  min-width: 720px;
-  grid-template-columns: 1.5fr repeat(3, 1fr);
+  width: max-content;
+  min-width: 100%;
+  overflow: hidden;
   border-top: 1px solid #d9e0eb;
-}
-
-.pivot-row span {
-  padding: 16px;
   border-left: 1px solid #d9e0eb;
+  background: #d9e0eb;
 }
 
-.pivot-row span:first-child {
-  border-left: 0;
+.pivot-cell {
+  min-width: 0;
+  padding: 16px;
+  border-right: 1px solid #d9e0eb;
+  border-bottom: 1px solid #d9e0eb;
+  background: #ffffff;
+  color: #344054;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
-.pivot-row.header,
-.pivot-row.total {
+.pivot-cell.header-cell,
+.pivot-cell.total-row-cell {
   background: #eef1f8;
+  color: #182230;
   font-weight: 750;
+}
+
+.pivot-cell.total-cell {
+  background: #f4f7fb;
+  font-weight: 750;
+}
+
+.pivot-cell.total-row-cell.total-cell {
+  background: #e8eef7;
+}
+
+.pivot-empty-result {
+  display: grid;
+  min-height: 180px;
+  place-items: center;
+  padding: 24px;
+  color: #667085;
+  text-align: center;
+  background: #f8fbff;
+  border-top: 1px solid #d9e0eb;
 }
 
 .negative {
@@ -1579,6 +1768,37 @@ table {
 .pivot-processing-dialog p {
   margin: 0 0 8px;
   color: #344054;
+}
+
+.pivot-filter-search {
+  width: 100%;
+}
+
+.pivot-filter-value-list {
+  display: grid;
+  min-width: 360px;
+  max-height: 320px;
+  gap: 6px;
+  overflow: auto;
+  padding-right: 4px;
+}
+
+.pivot-filter-value-list .mat-mdc-checkbox {
+  padding: 8px 10px;
+  border: 1px solid #e4edf8;
+  border-radius: 8px;
+}
+
+.pivot-filter-value-list .mdc-label {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.pivot-filter-value-list small {
+  color: #667085;
 }
 
 .template-name-field {

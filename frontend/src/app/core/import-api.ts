@@ -10,6 +10,8 @@ import {
   DatasetOverview,
   ImportMethod,
   ImportPreview,
+  PivotRequest,
+  PivotResult,
 } from './import-workflow.models';
 
 @Injectable({ providedIn: 'root' })
@@ -62,5 +64,9 @@ export class ImportApi {
       `${this.apiBaseUrl}/datasets/${datasetId}/explorer/filter`,
       payload,
     );
+  }
+
+  executePivot(datasetId: string, payload: PivotRequest) {
+    return this.http.post<PivotResult>(`${this.apiBaseUrl}/datasets/${datasetId}/pivot`, payload);
   }
 }

@@ -14,6 +14,12 @@
         <mat-icon>search</mat-icon>
       </div>
       <div class="field-search">Find field...</div>
+      @if (isLoadingFields) {
+        <p class="field-panel-message">Loading dataset fields...</p>
+      }
+      @if (fieldErrorMessage) {
+        <p class="field-panel-message">{{ fieldErrorMessage }}</p>
+      }
       <div
         id="availableFields"
         class="field-groups"
@@ -28,13 +34,34 @@
             <h3>{{ group.label }}</h3>
             <div class="field-list">
               @for (field of group.fields; track field.name) {
-                <span cdkDrag [cdkDragData]="field" [cdkDragDisabled]="isProcessing">
+                <span
+                  cdkDrag
+                  [cdkDragData]="field"
+                  [cdkDragDisabled]="isProcessing"
+                  (dblclick)="editFieldCategory(field, $event)"
+                >
                   <mat-icon>drag_indicator</mat-icon>
-                  {{ field.name }}
+                  <strong>{{ field.name }}</strong>
+                  <small
+                    class="category-tag {{ getCategoryClass(field) }}"
+                    title="Double-click to change category"
+                  >
+                    {{ getCategoryTag(field) }}
+                  </small>
+                  <small
+                    class="field-usage-badge"
+                    [class.empty]="getFieldUsageCount(field.name) === 0"
+                    title="Times used in Pivot Builder"
+                  >
+                    {{ getFieldUsageCount(field.name) }}
+                  </small>
                 </span>
               }
             </div>
           </section>
+        }
+        @if (!isLoadingFields && !fieldErrorMessage && availableFields.length === 0) {
+          <p class="field-panel-message">All dataset fields are currently used in the pivot builder.</p>
         }
       </div>
     </aside>
@@ -54,8 +81,23 @@
           @if (valuesHelperMessage) {
             <p class="values-helper">{{ valuesHelperMessage }}</p>
           }
+          @if (filterHelperMessage) {
+            <p class="values-helper">{{ filterHelperMessage }}</p>
+          }
+          @if (pivotValidationMessage) {
+            <p class="values-helper">{{ pivotValidationMessage }}</p>
+          }
         </div>
         <div class="pivot-toolbar-actions">
+          <button
+            mat-stroked-button
+            type="button"
+            [disabled]="isProcessing"
+            (click)="clearBuilder()"
+          >
+            <mat-icon>delete_sweep</mat-icon>
+            Clear Builder
+          </button>
           <button mat-stroked-button type="button" [disabled]="isProcessing" (click)="openTemplatesDialog()">
             <mat-icon>folder_open</mat-icon>
             Templates
@@ -69,7 +111,7 @@
             <mat-icon>save</mat-icon>
             Save Template
           </button>
-          <button mat-flat-button type="button" [disabled]="isProcessing || !hasPendingChanges" (click)="applyPivot()">
+          <button mat-flat-button type="button" [disabled]="isProcessing || !canApplyPivot" (click)="applyPivot()">
             <mat-icon>play_arrow</mat-icon>
             Apply Pivot
           </button>
@@ -95,29 +137,86 @@
               </div>
             </div>
             <div class="pivot-zone-fields">
-              @for (field of zone.fields; track field.name) {
-                <div class="pivot-field-chip" cdkDrag [cdkDragData]="field" [cdkDragDisabled]="isProcessing">
-                  <span>{{ field.name }}</span>
+              @for (field of zone.fields; track field.name + '-' + (field.aggregation ?? '') + '-' + $index) {
+                <div
+                  class="pivot-field-chip"
+                  [class.filter-field-chip]="zone.key === 'filters'"
+                  [class.value-field-chip]="zone.key === 'values'"
+                  cdkDrag
+                  [cdkDragData]="field"
+                  [cdkDragDisabled]="isProcessing"
+                  (dblclick)="editFieldCategory(field, $event)"
+                >
                   @if (zone.key === 'values') {
-                    <mat-select
-                      [value]="field.aggregation ?? 'Sum'"
+                    <div class="pivot-item-card-header">
+                      <strong class="pivot-field-name">{{ field.name }}</strong>
+                      <span class="pivot-field-actions">
+                        <small
+                          class="category-tag {{ getCategoryClass(field) }}"
+                          title="Double-click to change category"
+                        >
+                          {{ getCategoryTag(field) }}
+                        </small>
+                        <button
+                          mat-icon-button
+                          type="button"
+                          [disabled]="isProcessing"
+                          (click)="$event.stopPropagation(); removeField(zone, field, $index)"
+                          aria-label="Remove field"
+                        >
+                          <mat-icon>close</mat-icon>
+                        </button>
+                      </span>
+                    </div>
+                    <div class="value-aggregation-control">
+                      <span>Aggregation</span>
+                      <mat-select
+                        [value]="field.aggregation ?? 'Sum'"
                       [disabled]="isProcessing"
                       (selectionChange)="updateAggregation(field, $event.value)"
                     >
-                      @for (aggregation of aggregations; track aggregation) {
+                      @for (aggregation of getAggregations(field); track aggregation) {
                         <mat-option [value]="aggregation">{{ aggregation }}</mat-option>
                       }
-                    </mat-select>
+                      </mat-select>
+                    </div>
+                  } @else {
+                    <div class="pivot-item-card-header">
+                      <strong class="pivot-field-name">{{ field.name }}</strong>
+                      <span class="pivot-field-actions">
+                        <small
+                          class="category-tag {{ getCategoryClass(field) }}"
+                          title="Double-click to change category"
+                        >
+                          {{ getCategoryTag(field) }}
+                        </small>
+                        <button
+                          mat-icon-button
+                          type="button"
+                          [disabled]="isProcessing"
+                          (click)="$event.stopPropagation(); removeField(zone, field, $index)"
+                          aria-label="Remove field"
+                        >
+                          <mat-icon>close</mat-icon>
+                        </button>
+                      </span>
+                    </div>
+                    @if (zone.key === 'filters') {
+                      <div class="pivot-filter-value-row">
+                        <span class="pivot-filter-summary">{{ getFilterSummary(field) }}</span>
+                        <button
+                          mat-icon-button
+                          type="button"
+                          class="pivot-filter-edit"
+                          [disabled]="isProcessing || configuringFilterName() === field.name"
+                          (click)="$event.stopPropagation(); configureFilter(field)"
+                          aria-label="Edit filter"
+                        >
+                          <mat-icon>edit</mat-icon>
+                        </button>
+                      </div>
+                    }
                   }
-                  <button
-                    mat-icon-button
-                    type="button"
-                    [disabled]="isProcessing"
-                    (click)="removeField(zone, field)"
-                    aria-label="Remove field"
-                  >
-                    <mat-icon>close</mat-icon>
-                  </button>
                 </div>
               }
               <div class="drop-hint">Drop field here</div>
@@ -126,29 +225,54 @@
         }
       </section>
 
-      <section class="panel pivot-results">
+      <section class="panel pivot-results" [class.stale]="hasPendingChanges && pivotResult">
         <div class="panel-heading">
           <h2>Pivot Results</h2>
-          <span>Mock output from applied configuration</span>
+          <span>DuckDB result</span>
         </div>
-        <div class="pivot-table dynamic-pivot-table">
-          <div class="pivot-row header" [style.grid-template-columns]="'1.5fr repeat(' + (pivotResult.headers.length - 1) + ', 1fr)'">
-            @for (header of pivotResult.headers; track header) {
-              <span>{{ header }}</span>
+        @if (hasPendingChanges && pivotResult) {
+          <div class="pivot-stale-message">
+            Pivot configuration changed. Apply Pivot to refresh results.
+          </div>
+        }
+        @if (pivotWarnings.length > 0) {
+          <div class="pivot-result-warnings">
+            @for (warning of pivotWarnings; track warning) {
+              <p>{{ warning }}</p>
             }
           </div>
-          @for (row of pivotResult.rows; track row[0]) {
+        }
+        @if (pivotResult && pivotResult.rows.length > 0) {
+          <div class="pivot-table dynamic-pivot-table">
             <div
-              class="pivot-row"
-              [class.total]="row[0] === 'Total'"
-              [style.grid-template-columns]="'1.5fr repeat(' + (pivotResult.headers.length - 1) + ', 1fr)'"
+              class="pivot-grid-table"
+              [style.grid-template-columns]="'repeat(' + pivotResult.headers.length + ', minmax(140px, 1fr))'"
             >
-              @for (cell of row; track $index) {
-                <span>{{ cell }}</span>
+              @for (header of pivotResult.headers; track header; let columnIndex = $index) {
+                <span class="pivot-cell header-cell" [class.total-cell]="isTotalPivotColumn(columnIndex)">{{ header }}</span>
+              }
+              @for (row of pivotResult.rows; track $index) {
+                @for (cell of row; track $index; let columnIndex = $index) {
+                  <span
+                    class="pivot-cell"
+                    [class.total-row-cell]="isTotalPivotRow(row)"
+                    [class.total-cell]="isTotalPivotColumn(columnIndex)"
+                  >
+                    {{ formatPivotCell(cell) }}
+                  </span>
+                }
               }
             </div>
-          }
-        </div>
+          </div>
+        } @else if (pivotResult) {
+          <div class="pivot-empty-result">
+            No records match the selected pivot configuration.
+          </div>
+        } @else {
+          <div class="pivot-empty-result">
+            Configure a pivot and click Apply Pivot.
+          </div>
+        }
       </section>
     </div>
   </div>

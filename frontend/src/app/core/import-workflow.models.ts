@@ -197,3 +197,25 @@ export type ColumnProfile = {
   uniquePercentage?: number | null;
   duplicatePercentage?: number | null;
 };
+
+export type PivotFieldRequest = {
+  name: string;
+  category: ExplorerColumnCategory | null;
+  aggregation?: string;
+};
+
+export type PivotRequest = {
+  rows: PivotFieldRequest[];
+  columns: PivotFieldRequest[];
+  values: PivotFieldRequest[];
+  filters: ExplorerFilterPayload[];
+};
+
+export type PivotResult = {
+  datasetId: string;
+  headers: string[];
+  rows: (string | number | boolean | null)[][];
+  rowCount: number;
+  warnings: string[];
+  sql?: string;
+};

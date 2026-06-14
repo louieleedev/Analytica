@@ -1,12 +1,13 @@
-import { Component, Injectable, inject } from '@angular/core';
+import { Component, Injectable, effect, inject, signal } from '@angular/core';
+import { FormsModule } from '@angular/forms';
 import {
   CdkDragDrop,
   DragDropModule,
   moveItemInArray,
-  transferArrayItem,
 } from '@angular/cdk/drag-drop';
 import { MatButtonModule } from '@angular/material/button';
-import { MAT_DIALOG_DATA, MatDialog, MatDialogModule, MatDialogRef } from '@angular/material/dialog';
+import { MatCheckboxModule } from '@angular/material/checkbox';
+import { MAT_DIALOG_DATA, MatDialog, MatDialogModule } from '@angular/material/dialog';
 import { MatFormFieldModule } from '@angular/material/form-field';
 import { MatIconModule } from '@angular/material/icon';
 import { MatInputModule } from '@angular/material/input';
@@ -14,14 +15,29 @@ import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 
-type PivotFieldType = 'text' | 'number' | 'date';
+import { ImportApi } from '../../core/import-api';
+import {
+  DetectedColumnType,
+  ExplorerColumnCategory,
+  ExplorerFilterMetadata,
+  ExplorerFilterPayload,
+  PivotRequest,
+  PivotResult,
+  TopValue,
+} from '../../core/import-workflow.models';
+import { ProjectSelection } from '../../core/project-selection';
+import { ColumnCategoryDialog } from '../explorer/explorer';
+
+type PivotFieldType = 'text' | 'number' | 'date' | 'boolean';
 type PivotZoneKey = 'filters' | 'rows' | 'columns' | 'values';
 
 type PivotField = {
   name: string;
   type: PivotFieldType;
-  group: 'Dimensions' | 'Dates' | 'Measures';
+  dataType: DetectedColumnType;
+  category: ExplorerColumnCategory | null;
   aggregation?: string;
+  filter?: ExplorerFilterPayload;
 };
 
 type PivotZone = {
@@ -32,15 +48,25 @@ type PivotZone = {
   fields: PivotField[];
 };
 
-type PivotResult = {
-  headers: string[];
-  rows: string[][];
+type PivotFieldGroup = {
+  key: ExplorerColumnCategory | 'UNCATEGORIZED';
+  label: string;
+  fields: PivotField[];
 };
 
 type PivotTemplate = {
   id: string;
   name: string;
   config: Record<PivotZoneKey, PivotField[]>;
+};
+
+type IdentifierOperator = 'Equals' | 'Contains' | 'Starts With';
+
+type PersistedPivotState = {
+  config: Record<PivotZoneKey, PivotField[]>;
+  pivotResult: PivotResult | null;
+  pivotWarnings: string[];
+  hasPendingChanges: boolean;
 };
 
 @Injectable({ providedIn: 'root' })
@@ -125,6 +151,225 @@ export class SavePivotTemplateDialog {}
 export class DeletePivotTemplateDialog {}
 
 @Component({
+  selector: 'app-pivot-type-filter-dialog',
+  imports: [FormsModule, MatButtonModule, MatCheckboxModule, MatDialogModule, MatFormFieldModule, MatInputModule],
+  template: `
+    <h2 mat-dialog-title>Configure Filter</h2>
+    <mat-dialog-content>
+      <p class="dialog-intro">{{ data.fieldName }}</p>
+      <mat-form-field appearance="outline" class="pivot-filter-search">
+        <mat-label>Search values</mat-label>
+        <input matInput [(ngModel)]="searchTerm" placeholder="Search distinct values" />
+      </mat-form-field>
+      <div class="pivot-filter-value-list">
+        @for (item of filteredValues(); track item.value) {
+          <mat-checkbox [checked]="isSelected(item.value)" (change)="toggleValue(item.value, $event.checked)">
+            <span>{{ item.value }}</span>
+            <small>{{ item.count.toLocaleString() }}</small>
+          </mat-checkbox>
+        }
+      </div>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button type="button" mat-dialog-close>Cancel</button>
+      <button mat-flat-button type="button" [mat-dialog-close]="selectedValues">Save</button>
+    </mat-dialog-actions>
+  `,
+})
+export class PivotTypeFilterDialog {
+  protected readonly data = inject<{
+    fieldName: string;
+    values: TopValue[];
+    selectedValues: string[];
+  }>(MAT_DIALOG_DATA);
+  protected searchTerm = '';
+  protected selectedValues = [...this.data.selectedValues];
+
+  protected filteredValues(): TopValue[] {
+    const term = this.searchTerm.trim().toLowerCase();
+    if (!term) {
+      return this.data.values;
+    }
+
+    return this.data.values.filter((item) => item.value.toLowerCase().includes(term));
+  }
+
+  protected isSelected(value: string): boolean {
+    return this.selectedValues.includes(value);
+  }
+
+  protected toggleValue(value: string, checked: boolean): void {
+    this.selectedValues = checked
+      ? [...new Set([...this.selectedValues, value])]
+      : this.selectedValues.filter((item) => item !== value);
+  }
+}
+
+@Component({
+  selector: 'app-pivot-amount-filter-dialog',
+  imports: [FormsModule, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule],
+  template: `
+    <h2 mat-dialog-title>Configure Filter</h2>
+    <mat-dialog-content>
+      <p class="dialog-intro">{{ data.fieldName }}</p>
+      <div class="range-inputs">
+        <mat-form-field appearance="outline">
+          <mat-label>Min Value</mat-label>
+          <input matInput type="number" [(ngModel)]="min" [placeholder]="formatNumber(data.minimum)" />
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Max Value</mat-label>
+          <input matInput type="number" [(ngModel)]="max" [placeholder]="formatNumber(data.maximum)" />
+        </mat-form-field>
+      </div>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button type="button" mat-dialog-close>Cancel</button>
+      <button mat-flat-button type="button" [mat-dialog-close]="{ min: toNumber(min), max: toNumber(max) }">Save</button>
+    </mat-dialog-actions>
+  `,
+})
+export class PivotAmountFilterDialog {
+  protected readonly data = inject<{
+    fieldName: string;
+    minimum: number | null;
+    maximum: number | null;
+    currentMin: number | null;
+    currentMax: number | null;
+  }>(MAT_DIALOG_DATA);
+  protected min: number | string | null = this.data.currentMin ?? this.data.minimum;
+  protected max: number | string | null = this.data.currentMax ?? this.data.maximum;
+
+  protected formatNumber(value: number | null): string {
+    return value === null ? '' : String(value);
+  }
+
+  protected toNumber(value: number | string | null): number | null {
+    if (value === null || value === '') {
+      return null;
+    }
+
+    const parsedValue = Number(value);
+    return Number.isFinite(parsedValue) ? parsedValue : null;
+  }
+}
+
+@Component({
+  selector: 'app-pivot-time-filter-dialog',
+  imports: [FormsModule, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule],
+  template: `
+    <h2 mat-dialog-title>Configure Filter</h2>
+    <mat-dialog-content>
+      <p class="dialog-intro">{{ data.fieldName }}</p>
+      @if (data.isDate) {
+        <div class="range-inputs">
+          <mat-form-field appearance="outline">
+            <mat-label>From Date</mat-label>
+            <input matInput type="date" [(ngModel)]="from" />
+          </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>To Date</mat-label>
+            <input matInput type="date" [(ngModel)]="to" />
+          </mat-form-field>
+        </div>
+      } @else {
+        <div class="range-inputs">
+          <mat-form-field appearance="outline">
+            <mat-label>From Year</mat-label>
+            <input matInput type="number" [(ngModel)]="fromYear" />
+          </mat-form-field>
+          <mat-form-field appearance="outline">
+            <mat-label>To Year</mat-label>
+            <input matInput type="number" [(ngModel)]="toYear" />
+          </mat-form-field>
+        </div>
+      }
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button type="button" mat-dialog-close>Cancel</button>
+      <button
+        mat-flat-button
+        type="button"
+        [mat-dialog-close]="{
+          from: from || null,
+          to: to || null,
+          fromYear: toNumber(fromYear),
+          toYear: toNumber(toYear)
+        }"
+      >
+        Save
+      </button>
+    </mat-dialog-actions>
+  `,
+})
+export class PivotTimeFilterDialog {
+  protected readonly data = inject<{
+    fieldName: string;
+    isDate: boolean;
+    from: string | null;
+    to: string | null;
+    minimum: number | null;
+    maximum: number | null;
+    currentFrom: string | null;
+    currentTo: string | null;
+    currentFromYear: number | null;
+    currentToYear: number | null;
+  }>(MAT_DIALOG_DATA);
+  protected from = this.data.currentFrom ?? this.data.from ?? '';
+  protected to = this.data.currentTo ?? this.data.to ?? '';
+  protected fromYear: number | string | null = this.data.currentFromYear ?? this.data.minimum;
+  protected toYear: number | string | null = this.data.currentToYear ?? this.data.maximum;
+
+  protected toNumber(value: number | string | null): number | null {
+    if (value === null || value === '') {
+      return null;
+    }
+
+    const parsedValue = Number(value);
+    return Number.isFinite(parsedValue) ? parsedValue : null;
+  }
+}
+
+@Component({
+  selector: 'app-pivot-identifier-filter-dialog',
+  imports: [FormsModule, MatButtonModule, MatDialogModule, MatFormFieldModule, MatInputModule, MatSelectModule],
+  template: `
+    <h2 mat-dialog-title>Configure Filter</h2>
+    <mat-dialog-content>
+      <p class="dialog-intro">{{ data.fieldName }}</p>
+      <div class="identifier-filter-grid">
+        <mat-form-field appearance="outline">
+          <mat-label>Operator</mat-label>
+          <mat-select [(ngModel)]="operator">
+            @for (option of operators; track option) {
+              <mat-option [value]="option">{{ option }}</mat-option>
+            }
+          </mat-select>
+        </mat-form-field>
+        <mat-form-field appearance="outline">
+          <mat-label>Search</mat-label>
+          <input matInput [(ngModel)]="value" placeholder="Search identifier" />
+        </mat-form-field>
+      </div>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-button type="button" mat-dialog-close>Cancel</button>
+      <button mat-flat-button type="button" [mat-dialog-close]="{ operator, value: value.trim() }">Save</button>
+    </mat-dialog-actions>
+  `,
+})
+export class PivotIdentifierFilterDialog {
+  protected readonly data = inject<{
+    fieldName: string;
+    operator: IdentifierOperator;
+    value: string;
+  }>(MAT_DIALOG_DATA);
+  protected readonly operators: IdentifierOperator[] = ['Equals', 'Contains', 'Starts With'];
+  protected operator: IdentifierOperator = this.data.operator;
+  protected value = this.data.value;
+}
+
+@Component({
   selector: 'app-pivot-templates-dialog',
   imports: [MatButtonModule, MatDialogModule, MatIconModule],
   template: `
@@ -180,7 +425,9 @@ export class PivotTemplatesDialog {
   selector: 'app-pivot',
   imports: [
     DragDropModule,
+    FormsModule,
     MatButtonModule,
+    MatCheckboxModule,
     MatDialogModule,
     MatIconModule,
     MatProgressSpinnerModule,
@@ -190,34 +437,30 @@ export class PivotTemplatesDialog {
   templateUrl: './pivot.html',
 })
 export class Pivot {
+  private readonly importApi = inject(ImportApi);
+  private readonly projectSelection = inject(ProjectSelection);
   private readonly dialog = inject(MatDialog);
   private readonly snackBar = inject(MatSnackBar);
   private readonly templateStore = inject(PivotTemplateStore);
-  private dialogRef?: MatDialogRef<PivotProcessingDialog>;
+  private readonly categoryStoragePrefix = 'analytica:explorer-column-categories';
+  private readonly pivotStateStoragePrefix = 'analytica:pivot-state';
+  private loadedDatasetId: string | null = null;
 
   protected readonly maxTemplates = 4;
   protected templates: PivotTemplate[] = this.templateStore.getTemplates();
   protected isProcessing = false;
+  protected isLoadingFields = false;
+  protected fieldErrorMessage = '';
   protected hasPendingChanges = false;
   protected valuesHelperMessage = '';
-  protected readonly aggregations = ['Sum', 'Count', 'Average', 'Min', 'Max', 'Distinct Count'];
+  protected pivotWarnings: string[] = [];
+  protected filterHelperMessage = '';
+  protected configuringFilterName = signal<string | null>(null);
+  protected readonly amountAggregations = ['Sum', 'Average', 'Median', 'Min', 'Max', 'Count', 'Distinct Count'];
+  protected readonly discreteAggregations = ['Count', 'Distinct Count'];
 
-  private readonly allFields: PivotField[] = [
-    { name: 'CompanyCode', type: 'text', group: 'Dimensions' },
-    { name: 'Country', type: 'text', group: 'Dimensions' },
-    { name: 'Currency', type: 'text', group: 'Dimensions' },
-    { name: 'CostCenter', type: 'text', group: 'Dimensions' },
-    { name: 'GLAccount', type: 'text', group: 'Dimensions' },
-    { name: 'FiscalYear', type: 'date', group: 'Dates' },
-    { name: 'Quarter', type: 'date', group: 'Dates' },
-    { name: 'PostingDate', type: 'date', group: 'Dates' },
-    { name: 'AmountLocal', type: 'number', group: 'Measures' },
-    { name: 'Quantity', type: 'number', group: 'Measures' },
-    { name: 'TaxAmount', type: 'number', group: 'Measures' },
-    { name: 'Revenue', type: 'number', group: 'Measures' },
-  ];
-
-  protected availableFields: PivotField[] = this.cloneFields(this.allFields);
+  private allFields: PivotField[] = [];
+  protected availableFields: PivotField[] = [];
 
   protected readonly zones: PivotZone[] = [
     {
@@ -245,26 +488,118 @@ export class Pivot {
       key: 'values',
       label: 'Values',
       icon: 'functions',
-      helper: 'Numeric measures only',
+      helper: 'Measures and counts',
       fields: [],
     },
   ];
 
-  protected pivotResult: PivotResult = this.generateMockResult();
+  protected pivotResult: PivotResult | null = null;
+
+  constructor() {
+    effect(() => {
+      const datasetId = this.projectSelection.activeProject()?.datasetMetadata?.datasetId ?? null;
+      if (datasetId === this.loadedDatasetId) {
+        return;
+      }
+
+      this.loadedDatasetId = datasetId;
+      this.loadDatasetFields();
+    });
+  }
 
   protected get connectedDropLists(): string[] {
     return ['availableFields', ...this.zones.map((zone) => zone.key)];
   }
 
+  protected get canApplyPivot(): boolean {
+    return (
+      this.getZone('values').fields.length > 0 &&
+      this.getZone('rows').fields.length > 0
+    );
+  }
+
+  protected get pivotValidationMessage(): string {
+    if (this.getZone('values').fields.length === 0) {
+      return 'Add at least one Value field.';
+    }
+
+    if (this.getZone('rows').fields.length === 0) {
+      return 'Add at least one Row field.';
+    }
+
+    return '';
+  }
+
   protected get groupedAvailableFields(): { label: string; fields: PivotField[] }[] {
-    return ['Dimensions', 'Dates', 'Measures'].map((label) => ({
-      label,
-      fields: this.availableFields.filter((field) => field.group === label),
-    }));
+    const groups: PivotFieldGroup[] = [
+      { key: 'TYPE_VARIANT', label: 'TYPE / VARIANT', fields: [] },
+      { key: 'TIME_PERIOD', label: 'TIME PERIOD', fields: [] },
+      { key: 'AMOUNT', label: 'AMOUNT', fields: [] },
+      { key: 'IDENTIFIER', label: 'IDENTIFIER', fields: [] },
+      { key: 'UNCATEGORIZED', label: 'UNCATEGORIZED', fields: [] },
+    ];
+
+    for (const field of this.availableFields) {
+      const group = groups.find((item) => item.key === (field.category ?? 'UNCATEGORIZED'));
+      group?.fields.push(field);
+    }
+
+    return groups.filter((group) => group.fields.length > 0);
   }
 
   protected getZone(key: PivotZoneKey): PivotZone {
     return this.zones.find((zone) => zone.key === key)!;
+  }
+
+  protected getCategoryTag(field: PivotField): string {
+    if (field.category === 'TYPE_VARIANT') {
+      return 'TYPE';
+    }
+
+    if (field.category === 'TIME_PERIOD') {
+      return 'TIME';
+    }
+
+    if (field.category === 'AMOUNT') {
+      return 'AMOUNT';
+    }
+
+    if (field.category === 'IDENTIFIER') {
+      return 'IDENTIFIER';
+    }
+
+    return 'No Category';
+  }
+
+  protected getCategoryClass(field: PivotField): string {
+    if (field.category === 'TYPE_VARIANT') {
+      return 'type-variant';
+    }
+
+    if (field.category === 'TIME_PERIOD') {
+      return 'time-period';
+    }
+
+    if (field.category === 'AMOUNT') {
+      return 'amount';
+    }
+
+    if (field.category === 'IDENTIFIER') {
+      return 'identifier';
+    }
+
+    return 'no-category';
+  }
+
+  protected getAggregations(field: PivotField): string[] {
+    return field.category === 'AMOUNT' ? this.amountAggregations : this.discreteAggregations;
+  }
+
+  protected getFieldUsageCount(fieldName: string): number {
+    return this.zones.reduce(
+      (count, zone) => count + zone.fields.filter((field) => field.name === fieldName).length,
+      0,
+    );
   }
 
   protected drop(event: CdkDragDrop<PivotField[]>, zoneKey: PivotZoneKey | 'availableFields'): void {
@@ -275,69 +610,204 @@ export class Pivot {
     this.valuesHelperMessage = '';
     const field = event.item.data as PivotField;
 
-    if (zoneKey === 'values' && field.type !== 'number') {
-      this.valuesHelperMessage = 'Only numeric columns can be used as Values.';
+    if (event.previousContainer === event.container) {
+      if (zoneKey !== 'availableFields') {
+        moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
+        this.markPending();
+      } else {
+        this.sortAvailableFields();
+      }
       return;
     }
 
-    if (event.previousContainer === event.container) {
-      moveItemInArray(event.container.data, event.previousIndex, event.currentIndex);
-    } else {
-      transferArrayItem(
-        event.previousContainer.data,
-        event.container.data,
-        event.previousIndex,
-        event.currentIndex,
-      );
+    if (zoneKey !== 'availableFields' && !field.category) {
+      this.openCategoryDialog(field, (category) => {
+        this.updateFieldCategory(field.name, category);
+        this.moveFieldByName(
+          field.name,
+          zoneKey,
+          event.previousContainer.id as PivotZoneKey | 'availableFields',
+          event.previousIndex,
+          event.currentIndex,
+        );
+      });
+      return;
     }
 
-    if (zoneKey === 'values') {
-      field.aggregation ??= 'Sum';
-    }
-
-    if (zoneKey === 'availableFields') {
-      field.aggregation = undefined;
-      this.sortAvailableFields();
-    }
-
-    this.markPending();
+    this.moveFieldByName(
+      field.name,
+      zoneKey,
+      event.previousContainer.id as PivotZoneKey | 'availableFields',
+      event.previousIndex,
+      event.currentIndex,
+    );
   }
 
-  protected removeField(zone: PivotZone, field: PivotField): void {
+  protected removeField(zone: PivotZone, field: PivotField, fieldIndex?: number): void {
     if (this.isProcessing) {
       return;
     }
 
-    zone.fields = zone.fields.filter((zoneField) => zoneField.name !== field.name);
-    field.aggregation = undefined;
-    this.availableFields.push(field);
-    this.sortAvailableFields();
+    zone.fields =
+      fieldIndex === undefined
+        ? zone.fields.filter((zoneField) => zoneField.name !== field.name)
+        : zone.fields.filter((_, index) => index !== fieldIndex);
     this.markPending();
   }
 
   protected updateAggregation(field: PivotField, aggregation: string): void {
-    field.aggregation = aggregation;
+    field.aggregation = this.normaliseAggregation(field, aggregation);
     this.markPending();
   }
 
-  protected applyPivot(): void {
+  protected configureFilter(field: PivotField, options: { removeOnCancel?: boolean } = {}): void {
+    if (this.isProcessing || this.configuringFilterName()) {
+      return;
+    }
+
+    const activeProject = this.projectSelection.activeProject();
+    const datasetId = activeProject?.datasetMetadata?.datasetId;
+    if (!datasetId || !field.category) {
+      return;
+    }
+
+    this.filterHelperMessage = '';
+    this.configuringFilterName.set(field.name);
+    this.importApi
+      .filterExplorerDataset(datasetId, {
+        selectedColumns: [field.name],
+        selectedCategories: { [field.name]: field.category },
+        filters: [],
+      })
+      .subscribe({
+        next: (result) => {
+          this.configuringFilterName.set(null);
+          const metadata = result.filterMetadata[0];
+          if (!metadata) {
+            this.filterHelperMessage = 'Filter values could not be loaded.';
+            return;
+          }
+
+          this.openFilterDialog(field, metadata, options);
+        },
+        error: () => {
+          this.configuringFilterName.set(null);
+          this.filterHelperMessage = 'Filter values could not be loaded.';
+        },
+      });
+  }
+
+  protected getFilterSummary(field: PivotField): string {
+    const filter = field.filter;
+    if (!filter || !field.category) {
+      return 'Not configured';
+    }
+
+    if (field.category === 'TYPE_VARIANT' && 'values' in filter) {
+      if (filter.values.length === 0) {
+        return 'No values selected';
+      }
+
+      return filter.values.length <= 3
+        ? `Selected: ${filter.values.join(', ')}`
+        : `Selected: ${filter.values.length} values`;
+    }
+
+    if (field.category === 'AMOUNT' && 'min' in filter && 'max' in filter) {
+      return `Range: ${this.formatRangeValue(filter.min)} - ${this.formatRangeValue(filter.max)}`;
+    }
+
+    if (field.category === 'TIME_PERIOD' && 'from' in filter) {
+      if ('fromYear' in filter && (filter.fromYear !== null || filter.toYear !== null)) {
+        return `Range: ${this.formatRangeValue(filter.fromYear)} - ${this.formatRangeValue(filter.toYear)}`;
+      }
+
+      return `Range: ${this.formatRangeValue(filter.from)} - ${this.formatRangeValue(filter.to)}`;
+    }
+
+    if (field.category === 'IDENTIFIER' && 'operator' in filter) {
+      return filter.value ? `${filter.operator}: ${filter.value}` : 'No value entered';
+    }
+
+    return 'Not configured';
+  }
+
+  protected editFieldCategory(field: PivotField, event: MouseEvent): void {
+    event.stopPropagation();
+    this.openCategoryDialog(field, (category) => {
+      this.updateFieldCategory(field.name, category);
+      this.enforceZoneRulesAfterCategoryChange(field.name);
+      this.markPending();
+    });
+  }
+
+  protected formatPivotCell(value: string | number | boolean | null): string {
+    if (value === null || value === undefined || value === '') {
+      return '-';
+    }
+
+    if (typeof value === 'number') {
+      return value.toLocaleString(undefined, { maximumFractionDigits: 4 });
+    }
+
+    return String(value);
+  }
+
+  protected isTotalPivotRow(row: (string | number | boolean | null)[]): boolean {
+    return row[0] === 'Total' || String(row[0] ?? '').startsWith('Grand ');
+  }
+
+  protected isTotalPivotColumn(index: number): boolean {
+    const header = this.pivotResult?.headers[index] ?? '';
+    return header === 'Total' || header.startsWith('Total ') || header.startsWith('Grand ');
+  }
+
+  protected clearBuilder(): void {
     if (this.isProcessing) {
       return;
     }
 
+    for (const zone of this.zones) {
+      zone.fields = [];
+    }
+    this.pivotResult = null;
+    this.pivotWarnings = [];
+    this.hasPendingChanges = false;
+    this.valuesHelperMessage = '';
+    this.filterHelperMessage = '';
+    this.clearPivotState();
+  }
+
+  protected applyPivot(): void {
+    const activeProject = this.projectSelection.activeProject();
+    const datasetId = activeProject?.datasetMetadata?.datasetId;
+    if (this.isProcessing || !datasetId || !this.canApplyPivot) {
+      return;
+    }
+
     this.isProcessing = true;
-    this.dialogRef = this.dialog.open(PivotProcessingDialog, {
+    this.valuesHelperMessage = '';
+    this.pivotWarnings = [];
+    const dialogRef = this.dialog.open(PivotProcessingDialog, {
       disableClose: true,
       width: '420px',
     });
 
-    // TODO: Replace this delay with a FastAPI request that triggers DuckDB aggregation.
-    window.setTimeout(() => {
-      this.pivotResult = this.generateMockResult();
-      this.hasPendingChanges = false;
-      this.isProcessing = false;
-      this.dialogRef?.close();
-    }, 1000);
+    this.importApi.executePivot(datasetId, this.createPivotRequest()).subscribe({
+      next: (result) => {
+        this.pivotResult = result;
+        this.pivotWarnings = result.warnings;
+        this.hasPendingChanges = false;
+        this.isProcessing = false;
+        this.savePivotState();
+        dialogRef.close();
+      },
+      error: () => {
+        this.isProcessing = false;
+        dialogRef.close();
+        this.valuesHelperMessage = 'Pivot could not be calculated.';
+      },
+    });
   }
 
   protected openSaveTemplateDialog(): void {
@@ -383,11 +853,10 @@ export class Pivot {
 
   private loadTemplate(template: PivotTemplate): void {
     for (const zone of this.zones) {
-      zone.fields = this.cloneFields(template.config[zone.key] ?? []);
+      zone.fields = this.cloneKnownFields(template.config[zone.key] ?? []);
     }
 
-    const usedFieldNames = new Set(this.zones.flatMap((zone) => zone.fields.map((field) => field.name)));
-    this.availableFields = this.cloneFields(this.allFields.filter((field) => !usedFieldNames.has(field.name)));
+    this.availableFields = this.cloneFields(this.allFields);
     this.sortAvailableFields();
     this.valuesHelperMessage = '';
     this.markPending();
@@ -403,8 +872,381 @@ export class Pivot {
     };
   }
 
+  private createPivotRequest(): PivotRequest {
+    return {
+      rows: this.getZone('rows').fields.map((field) => this.toPivotFieldRequest(field)),
+      columns: this.getZone('columns').fields.map((field) => this.toPivotFieldRequest(field)),
+      values: this.getZone('values').fields.map((field) => this.toPivotFieldRequest(field)),
+      filters: this.getZone('filters')
+        .fields.map((field) => field.filter)
+        .filter((filter): filter is ExplorerFilterPayload => this.hasActiveFilterValue(filter)),
+    };
+  }
+
+  private toPivotFieldRequest(field: PivotField) {
+    return {
+      name: field.name,
+      category: field.category,
+      aggregation: this.normaliseAggregation(field, field.aggregation),
+    };
+  }
+
+  private normaliseAggregation(field: PivotField, aggregation: string | undefined): string {
+    const aggregations = this.getAggregations(field);
+    if (aggregation && aggregations.includes(aggregation)) {
+      return aggregation;
+    }
+
+    return field.category === 'AMOUNT' ? 'Sum' : 'Count';
+  }
+
   private markPending(): void {
     this.hasPendingChanges = true;
+    this.savePivotState();
+  }
+
+  private openFilterDialog(
+    field: PivotField,
+    metadata: ExplorerFilterMetadata,
+    options: { removeOnCancel?: boolean } = {},
+  ): void {
+    if (field.category === 'TYPE_VARIANT') {
+      this.openTypeVariantFilterDialog(field, metadata, options);
+    } else if (field.category === 'AMOUNT') {
+      this.openAmountFilterDialog(field, metadata, options);
+    } else if (field.category === 'TIME_PERIOD') {
+      this.openTimeFilterDialog(field, metadata, options);
+    } else if (field.category === 'IDENTIFIER') {
+      this.openIdentifierFilterDialog(field, options);
+    }
+  }
+
+  private openTypeVariantFilterDialog(
+    field: PivotField,
+    metadata: ExplorerFilterMetadata,
+    options: { removeOnCancel?: boolean } = {},
+  ): void {
+    const currentValues =
+      field.filter && 'values' in field.filter ? field.filter.values.map((value) => String(value)) : [];
+    this.dialog
+      .open(PivotTypeFilterDialog, {
+        width: '500px',
+        data: {
+          fieldName: field.name,
+          values: metadata.values ?? [],
+          selectedValues: currentValues,
+        },
+      })
+      .afterClosed()
+      .subscribe((values?: string[]) => {
+        if (!values) {
+          this.handleFilterConfigurationCancel(field, options);
+          return;
+        }
+
+        field.filter = {
+          columnName: field.name,
+          category: 'TYPE_VARIANT',
+          values,
+        };
+        this.markPending();
+      });
+  }
+
+  private openAmountFilterDialog(
+    field: PivotField,
+    metadata: ExplorerFilterMetadata,
+    options: { removeOnCancel?: boolean } = {},
+  ): void {
+    const currentFilter = field.filter && 'min' in field.filter ? field.filter : null;
+    this.dialog
+      .open(PivotAmountFilterDialog, {
+        width: '460px',
+        data: {
+          fieldName: field.name,
+          minimum: this.toNullableNumber(metadata.min),
+          maximum: this.toNullableNumber(metadata.max),
+          currentMin: currentFilter?.min ?? null,
+          currentMax: currentFilter?.max ?? null,
+        },
+      })
+      .afterClosed()
+      .subscribe((range?: { min: number | null; max: number | null }) => {
+        if (!range) {
+          this.handleFilterConfigurationCancel(field, options);
+          return;
+        }
+
+        field.filter = {
+          columnName: field.name,
+          category: 'AMOUNT',
+          min: range.min,
+          max: range.max,
+        };
+        this.markPending();
+      });
+  }
+
+  private openTimeFilterDialog(
+    field: PivotField,
+    metadata: ExplorerFilterMetadata,
+    options: { removeOnCancel?: boolean } = {},
+  ): void {
+    const currentFilter =
+      field.filter && 'from' in field.filter && 'fromYear' in field.filter ? field.filter : null;
+    this.dialog
+      .open(PivotTimeFilterDialog, {
+        width: '460px',
+        data: {
+          fieldName: field.name,
+          isDate: metadata.type === 'Date',
+          from: metadata.from ?? null,
+          to: metadata.to ?? null,
+          minimum: this.toNullableNumber(metadata.min),
+          maximum: this.toNullableNumber(metadata.max),
+          currentFrom: currentFilter?.from ?? null,
+          currentTo: currentFilter?.to ?? null,
+          currentFromYear: currentFilter?.fromYear ?? null,
+          currentToYear: currentFilter?.toYear ?? null,
+        },
+      })
+      .afterClosed()
+      .subscribe(
+        (
+          range?:
+            | {
+                from: string | null;
+                to: string | null;
+                fromYear: number | null;
+                toYear: number | null;
+              }
+            | undefined,
+        ) => {
+          if (!range) {
+            this.handleFilterConfigurationCancel(field, options);
+            return;
+          }
+
+          field.filter = {
+            columnName: field.name,
+            category: 'TIME_PERIOD',
+            from: range.from,
+            to: range.to,
+            fromYear: range.fromYear,
+            toYear: range.toYear,
+          };
+          this.markPending();
+        },
+      );
+  }
+
+  private openIdentifierFilterDialog(
+    field: PivotField,
+    options: { removeOnCancel?: boolean } = {},
+  ): void {
+    const currentFilter = field.filter && 'operator' in field.filter ? field.filter : null;
+    this.dialog
+      .open(PivotIdentifierFilterDialog, {
+        width: '460px',
+        data: {
+          fieldName: field.name,
+          operator: (currentFilter?.operator as IdentifierOperator | undefined) ?? 'Contains',
+          value: currentFilter?.value ?? '',
+        },
+      })
+      .afterClosed()
+      .subscribe((filter?: { operator: IdentifierOperator; value: string }) => {
+        if (!filter) {
+          this.handleFilterConfigurationCancel(field, options);
+          return;
+        }
+
+        field.filter = {
+          columnName: field.name,
+          category: 'IDENTIFIER',
+          operator: filter.operator,
+          value: filter.value,
+        };
+        this.markPending();
+      });
+  }
+
+  private handleFilterConfigurationCancel(
+    field: PivotField,
+    options: { removeOnCancel?: boolean },
+  ): void {
+    if (!options.removeOnCancel || field.filter) {
+      return;
+    }
+
+    const filtersZone = this.getZone('filters');
+    filtersZone.fields = filtersZone.fields.filter((zoneField) => zoneField !== field);
+    this.markPending();
+  }
+
+  private moveFieldByName(
+    fieldName: string,
+    targetZoneKey: PivotZoneKey | 'availableFields',
+    sourceZoneKey: PivotZoneKey | 'availableFields',
+    sourceIndex: number,
+    targetIndex?: number,
+  ): void {
+    const shouldCopyFromSourceList = sourceZoneKey === 'availableFields';
+    const field = shouldCopyFromSourceList
+      ? this.availableFields.find((availableField) => availableField.name === fieldName)
+      : this.removeFieldFromLocation(sourceZoneKey, sourceIndex);
+    if (!field) {
+      return;
+    }
+
+    if (targetZoneKey === 'availableFields') {
+      field.aggregation = undefined;
+      field.filter = undefined;
+      this.markPending();
+      return;
+    }
+
+    const targetZone = this.getZone(targetZoneKey);
+    if (
+      targetZoneKey !== 'values' &&
+      targetZone.fields.some((zoneField) => zoneField.name === fieldName)
+    ) {
+      if (sourceZoneKey !== 'availableFields') {
+        this.getZone(sourceZoneKey).fields.splice(sourceIndex, 0, field);
+      }
+      this.valuesHelperMessage = `${fieldName} is already used in ${targetZone.label}.`;
+      return;
+    }
+
+    const fieldForTarget = shouldCopyFromSourceList ? { ...field } : field;
+    if (targetZoneKey === 'values') {
+      fieldForTarget.aggregation = this.normaliseAggregation(fieldForTarget, fieldForTarget.aggregation);
+      fieldForTarget.filter = undefined;
+    } else {
+      fieldForTarget.aggregation = undefined;
+      if (targetZoneKey !== 'filters') {
+        fieldForTarget.filter = undefined;
+      }
+    }
+
+    targetZone.fields.splice(targetIndex ?? targetZone.fields.length, 0, fieldForTarget);
+    this.markPending();
+    if (targetZoneKey === 'filters') {
+      this.configureFilter(fieldForTarget, { removeOnCancel: true });
+    }
+  }
+
+  private removeFieldFromLocation(
+    sourceZoneKey: PivotZoneKey,
+    sourceIndex: number,
+  ): PivotField | null {
+    const sourceZone = this.getZone(sourceZoneKey);
+    const [field] = sourceZone.fields.splice(sourceIndex, 1);
+    return field ?? null;
+  }
+
+  private returnFieldToAvailable(field: PivotField): void {
+    field.aggregation = undefined;
+    field.filter = undefined;
+  }
+
+  private openCategoryDialog(
+    field: PivotField,
+    onCategorySelected: (category: ExplorerColumnCategory | null) => void,
+  ): void {
+    this.dialog
+      .open(ColumnCategoryDialog, {
+        width: '460px',
+        data: {
+          columnName: field.name,
+          category: field.category,
+          sampleValues: [],
+        },
+      })
+      .afterClosed()
+      .subscribe((category?: ExplorerColumnCategory | 'CLEAR') => {
+        if (!category) {
+          return;
+        }
+
+        onCategorySelected(category === 'CLEAR' ? null : category);
+      });
+  }
+
+  private updateFieldCategory(fieldName: string, category: ExplorerColumnCategory | null): void {
+    this.allFields = this.allFields.map((field) =>
+      field.name === fieldName ? { ...field, category } : field,
+    );
+    this.availableFields = this.availableFields.map((field) =>
+      field.name === fieldName ? { ...field, category } : field,
+    );
+    for (const zone of this.zones) {
+      zone.fields = zone.fields.map((field) => {
+        if (field.name !== fieldName) {
+          return field;
+        }
+
+        return { ...field, category, filter: field.category === category ? field.filter : undefined };
+      });
+    }
+    this.saveExplorerCategories();
+  }
+
+  private enforceZoneRulesAfterCategoryChange(fieldName: string): void {
+    const valueField = this.getZone('values').fields.find((field) => field.name === fieldName);
+    if (valueField) {
+      valueField.aggregation = this.normaliseAggregation(valueField, valueField.aggregation);
+    }
+
+    for (const zone of this.zones) {
+      const uncategorizedField = zone.fields.find((field) => field.name === fieldName && !field.category);
+      if (uncategorizedField) {
+        zone.fields = zone.fields.filter((field) => field.name !== fieldName);
+        uncategorizedField.aggregation = undefined;
+        uncategorizedField.filter = undefined;
+        this.valuesHelperMessage = 'Assign a category before using a field in the Pivot Builder.';
+      }
+    }
+  }
+
+  private hasActiveFilterValue(filter: ExplorerFilterPayload | undefined): filter is ExplorerFilterPayload {
+    if (!filter) {
+      return false;
+    }
+
+    if ('values' in filter) {
+      return filter.values.length > 0;
+    }
+
+    if ('min' in filter && 'max' in filter) {
+      return filter.min !== null || filter.max !== null;
+    }
+
+    if ('from' in filter && 'to' in filter) {
+      return (
+        Boolean(filter.from) ||
+        Boolean(filter.to) ||
+        ('fromYear' in filter && (filter.fromYear !== null || filter.toYear !== null))
+      );
+    }
+
+    if ('value' in filter) {
+      return filter.value.trim().length > 0;
+    }
+
+    return false;
+  }
+
+  private formatRangeValue(value: string | number | null | undefined): string {
+    if (value === null || value === undefined || value === '') {
+      return 'Any';
+    }
+
+    return String(value);
+  }
+
+  private toNullableNumber(value: number | null | undefined): number | null {
+    return typeof value === 'number' && Number.isFinite(value) ? value : null;
   }
 
   private sortAvailableFields(): void {
@@ -415,53 +1257,159 @@ export class Pivot {
     return fields.map((field) => ({ ...field }));
   }
 
-  private generateMockResult(): PivotResult {
-    // TODO: Future implementation will use FastAPI endpoints for real filtering and pivot generation.
-    // TODO: DuckDB will calculate real aggregations for the configured rows, columns, filters, and values.
-    const rowFields = this.getZone('rows').fields.map((field) => field.name);
-    const columnFields = this.getZone('columns').fields.map((field) => field.name);
-    const valueFields = this.getZone('values').fields.map((field) => field.name);
+  private cloneKnownFields(fields: PivotField[]): PivotField[] {
+    const availableFieldMap = new Map(this.allFields.map((field) => [field.name, field]));
+    const knownFields: PivotField[] = [];
 
-    const rowHeader = rowFields.length > 0 ? rowFields.join(' / ') : 'Rows';
-    const columnHeaders =
-      columnFields.length > 0 ? ['2023', '2024', '2025'] : valueFields.map((field) => field);
+    for (const field of fields) {
+      const knownField = availableFieldMap.get(field.name);
+      if (knownField) {
+        knownFields.push({ ...knownField, aggregation: field.aggregation, filter: field.filter });
+      }
+    }
 
-    const headers = [rowHeader, ...columnHeaders];
-    const rowLabels = this.buildRowLabels(rowFields);
-
-    const rows = rowLabels.map((label, rowIndex) => [
-      label,
-      ...columnHeaders.map((_, columnIndex) =>
-        this.formatMockValue((rowIndex + 1) * (columnIndex + 2) * 184250),
-      ),
-    ]);
-
-    rows.push(['Total', ...columnHeaders.map((_, columnIndex) => this.formatMockValue((columnIndex + 5) * 720000))]);
-
-    return { headers, rows };
+    return knownFields;
   }
 
-  private buildRowLabels(rowFields: string[]): string[] {
-    if (rowFields.includes('Country') && rowFields.includes('CostCenter')) {
-      return ['Germany / CC-120', 'Germany / CC-330', 'United States / CC-210', 'France / CC-180'];
+  private loadDatasetFields(): void {
+    const activeProject = this.projectSelection.activeProject();
+    const datasetId = activeProject?.datasetMetadata?.datasetId;
+    this.fieldErrorMessage = '';
+
+    if (!datasetId) {
+      this.allFields = [];
+      this.availableFields = [];
+      this.fieldErrorMessage = 'Open a project created from uploaded files to configure a pivot.';
+      this.resetPivotConfiguration();
+      return;
     }
 
-    if (rowFields.includes('Country')) {
-      return ['Germany', 'United States', 'France', 'Japan'];
-    }
-
-    if (rowFields.includes('CostCenter')) {
-      return ['CC-120', 'CC-210', 'CC-330', 'CC-180'];
-    }
-
-    if (rowFields.length > 0) {
-      return [`${rowFields[0]} A`, `${rowFields[0]} B`, `${rowFields[0]} C`];
-    }
-
-    return ['All Records'];
+    this.isLoadingFields = true;
+    this.importApi.getDatasetOverview(datasetId).subscribe({
+      next: (overview) => {
+        const categories = this.loadExplorerCategories(activeProject.id);
+        this.allFields = overview.columns.map((column) => ({
+          name: column.name,
+          type: this.toPivotFieldType(column.type),
+          dataType: column.type,
+          category: categories[column.name] ?? null,
+        }));
+        this.restorePivotState(activeProject.id);
+        this.isLoadingFields = false;
+      },
+      error: () => {
+        this.allFields = [];
+        this.availableFields = [];
+        this.isLoadingFields = false;
+        this.fieldErrorMessage = 'Dataset fields could not be loaded.';
+      },
+    });
   }
 
-  private formatMockValue(value: number): string {
-    return value.toLocaleString('en-US', { maximumFractionDigits: 0 });
+  private loadExplorerCategories(projectId: string): Record<string, ExplorerColumnCategory> {
+    try {
+      return JSON.parse(localStorage.getItem(`${this.categoryStoragePrefix}:${projectId}`) ?? '{}');
+    } catch {
+      return {};
+    }
+  }
+
+  private saveExplorerCategories(): void {
+    const activeProject = this.projectSelection.activeProject();
+    if (!activeProject) {
+      return;
+    }
+
+    const categories = Object.fromEntries(
+      this.allFields
+        .filter((field): field is PivotField & { category: ExplorerColumnCategory } => field.category !== null)
+        .map((field) => [field.name, field.category]),
+    );
+    localStorage.setItem(`${this.categoryStoragePrefix}:${activeProject.id}`, JSON.stringify(categories));
+  }
+
+  private resetPivotConfiguration(): void {
+    for (const zone of this.zones) {
+      zone.fields = [];
+    }
+
+    this.availableFields = this.cloneFields(this.allFields);
+    this.sortAvailableFields();
+    this.pivotResult = null;
+    this.pivotWarnings = [];
+    this.hasPendingChanges = false;
+    this.valuesHelperMessage = '';
+    this.filterHelperMessage = '';
+  }
+
+  private restorePivotState(projectId: string): void {
+    const state = this.loadPivotState(projectId);
+    if (!state) {
+      this.resetPivotConfiguration();
+      return;
+    }
+
+    for (const zone of this.zones) {
+      zone.fields = this.cloneKnownFields(state.config[zone.key] ?? []);
+    }
+    this.availableFields = this.cloneFields(this.allFields);
+    this.sortAvailableFields();
+    this.pivotResult = state.pivotResult;
+    this.pivotWarnings = state.pivotWarnings ?? [];
+    this.hasPendingChanges = state.hasPendingChanges;
+    this.valuesHelperMessage = '';
+    this.filterHelperMessage = '';
+  }
+
+  private loadPivotState(projectId: string): PersistedPivotState | null {
+    try {
+      return JSON.parse(localStorage.getItem(this.getPivotStateStorageKey(projectId)) ?? 'null');
+    } catch {
+      return null;
+    }
+  }
+
+  private savePivotState(): void {
+    const projectId = this.projectSelection.activeProject()?.id;
+    if (!projectId || this.allFields.length === 0) {
+      return;
+    }
+
+    const state: PersistedPivotState = {
+      config: this.createTemplateConfig(),
+      pivotResult: this.pivotResult,
+      pivotWarnings: this.pivotWarnings,
+      hasPendingChanges: this.hasPendingChanges,
+    };
+    localStorage.setItem(this.getPivotStateStorageKey(projectId), JSON.stringify(state));
+  }
+
+  private clearPivotState(): void {
+    const projectId = this.projectSelection.activeProject()?.id;
+    if (!projectId) {
+      return;
+    }
+
+    localStorage.removeItem(this.getPivotStateStorageKey(projectId));
+  }
+
+  private getPivotStateStorageKey(projectId: string): string {
+    return `${this.pivotStateStoragePrefix}:${projectId}`;
+  }
+
+  private toPivotFieldType(dataType: DetectedColumnType): PivotFieldType {
+    if (dataType === 'Integer' || dataType === 'Decimal') {
+      return 'number';
+    }
+
+    if (dataType === 'Date') {
+      return 'date';
+    }
+
+    if (dataType === 'Boolean') {
+      return 'boolean';
+    }
+
+    return 'text';
   }
 }
