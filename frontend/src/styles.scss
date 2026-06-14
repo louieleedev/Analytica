@@ -1576,6 +1576,7 @@ table {
 }
 
 .field-list span {
+  position: relative;
   box-sizing: border-box;
   display: grid;
   grid-template-columns: 18px minmax(0, 1fr) auto 28px;
@@ -1594,6 +1595,26 @@ table {
 
 .field-list span:active {
   cursor: grabbing;
+}
+
+.field-list span[data-tooltip]:hover::after {
+  position: absolute;
+  z-index: 20;
+  top: 50%;
+  left: calc(100% + 10px);
+  min-width: 180px;
+  max-width: 240px;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #182230;
+  color: #ffffff;
+  content: attr(data-tooltip);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.45;
+  pointer-events: none;
+  transform: translateY(-50%);
+  white-space: pre-line;
 }
 
 .field-list span strong {
@@ -1734,6 +1755,19 @@ table {
   font-weight: 750;
 }
 
+.pivot-cell.hierarchy-header-cell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 46px;
+  text-align: center;
+}
+
+.pivot-cell.compact-header-cell {
+  justify-content: flex-start;
+  text-align: left;
+}
+
 .pivot-cell.total-cell {
   background: #f4f7fb;
   font-weight: 750;
@@ -1752,6 +1786,35 @@ table {
   text-align: center;
   background: #f8fbff;
   border-top: 1px solid #d9e0eb;
+}
+
+.pivot-render-guard {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+  padding: 24px;
+  border-top: 1px solid #d9e0eb;
+  background: #fff8eb;
+  color: #7a2e0e;
+}
+
+.pivot-render-guard mat-icon {
+  color: #dc6803;
+}
+
+.pivot-render-guard h3,
+.pivot-render-guard p {
+  margin: 0 0 6px;
+}
+
+.pivot-render-guard h3 {
+  color: #7a2e0e;
+  font-size: 15px;
+}
+
+.pivot-render-guard small {
+  color: #93370d;
+  font-weight: 700;
 }
 
 .negative {

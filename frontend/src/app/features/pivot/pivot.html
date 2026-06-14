@@ -38,6 +38,7 @@
                   cdkDrag
                   [cdkDragData]="field"
                   [cdkDragDisabled]="isProcessing"
+                  [attr.data-tooltip]="getFieldTooltip(field)"
                   (dblclick)="editFieldCategory(field, $event)"
                 >
                   <mat-icon>drag_indicator</mat-icon>
@@ -228,7 +229,7 @@
       <section class="panel pivot-results" [class.stale]="hasPendingChanges && pivotResult">
         <div class="panel-heading">
           <h2>Pivot Results</h2>
-          <span>DuckDB result</span>
+          <span>{{ pivotResultMetadataText }}</span>
         </div>
         @if (hasPendingChanges && pivotResult) {
           <div class="pivot-stale-message">
@@ -242,26 +243,51 @@
             }
           </div>
         }
-        @if (pivotResult && pivotResult.rows.length > 0) {
+        @if (pivotResult && displayedPivotRows.length > 0 && canRenderPivotResult) {
           <div class="pivot-table dynamic-pivot-table">
             <div
               class="pivot-grid-table"
-              [style.grid-template-columns]="'repeat(' + pivotResult.headers.length + ', minmax(140px, 1fr))'"
+              [style.grid-template-columns]="pivotGridTemplateColumns"
             >
-              @for (header of pivotResult.headers; track header; let columnIndex = $index) {
-                <span class="pivot-cell header-cell" [class.total-cell]="isTotalPivotColumn(columnIndex)">{{ header }}</span>
+              @for (headerCell of cachedPivotHeaderCells; track headerCell.row + '-' + headerCell.column + '-' + headerCell.label) {
+                <span
+                  class="pivot-cell header-cell hierarchy-header-cell"
+                  [class.compact-header-cell]="pivotRenderMetrics.mode === 'Compact'"
+                  [class.total-cell]="headerCell.isTotal"
+                  [style.grid-column]="headerCell.column + ' / span ' + headerCell.columnSpan"
+                  [style.grid-row]="headerCell.row + ' / span ' + headerCell.rowSpan"
+                >
+                  {{ headerCell.label }}
+                </span>
               }
-              @for (row of pivotResult.rows; track $index) {
+              @for (row of displayedPivotRows; track $index; let rowIndex = $index) {
                 @for (cell of row; track $index; let columnIndex = $index) {
                   <span
                     class="pivot-cell"
                     [class.total-row-cell]="isTotalPivotRow(row)"
                     [class.total-cell]="isTotalPivotColumn(columnIndex)"
+                    [style.grid-column]="columnIndex + 1"
+                    [style.grid-row]="getPivotBodyGridRow(rowIndex)"
                   >
                     {{ formatPivotCell(cell) }}
                   </span>
                 }
               }
+            </div>
+          </div>
+        } @else if (pivotResult && displayedPivotRows.length > 0) {
+          <div class="pivot-render-guard">
+            <mat-icon>warning</mat-icon>
+            <div>
+              <h3>Pivot result is too large to render safely.</h3>
+              <p>Rows: {{ formatMetricValue(pivotRenderMetrics.rows) }}</p>
+              <p>Columns: {{ formatMetricValue(pivotRenderMetrics.columns) }}</p>
+              <p>Cells: {{ formatMetricValue(pivotRenderMetrics.cells) }}</p>
+              <p>Reduce rows, columns or apply filters.</p>
+              <small>
+                Current safe rendering limits: {{ formattedRenderedCellLimit }} cells or
+                {{ formattedColumnCombinationLimit }} column combinations.
+              </small>
             </div>
           </div>
         } @else if (pivotResult) {

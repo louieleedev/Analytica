@@ -21,7 +21,7 @@ from app.services.project_storage import (
     list_project_records,
     update_project_record,
 )
-from app.services.pivot_service import execute_pivot
+from app.services.pivot_service import estimate_pivot, execute_pivot
 
 
 class ProjectCreateRequest(BaseModel):
@@ -116,6 +116,10 @@ def create_app() -> FastAPI:
     @app.post("/datasets/{dataset_id}/pivot", tags=["datasets"])
     def dataset_pivot(dataset_id: str, payload: dict) -> dict:
         return execute_pivot(dataset_id, payload)
+
+    @app.post("/datasets/{dataset_id}/pivot/estimate", tags=["datasets"])
+    def dataset_pivot_estimate(dataset_id: str, payload: dict) -> dict:
+        return estimate_pivot(dataset_id, payload)
 
     return app
 

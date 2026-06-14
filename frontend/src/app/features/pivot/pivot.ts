@@ -21,6 +21,7 @@ import {
   ExplorerColumnCategory,
   ExplorerFilterMetadata,
   ExplorerFilterPayload,
+  PivotEstimate,
   PivotRequest,
   PivotResult,
   TopValue,
@@ -36,6 +37,7 @@ type PivotField = {
   type: PivotFieldType;
   dataType: DetectedColumnType;
   category: ExplorerColumnCategory | null;
+  distinctCount?: number;
   aggregation?: string;
   filter?: ExplorerFilterPayload;
 };
@@ -59,6 +61,25 @@ type PivotTemplate = {
   name: string;
   config: Record<PivotZoneKey, PivotField[]>;
 };
+
+type PivotHeaderCell = {
+  label: string;
+  column: number;
+  row: number;
+  columnSpan: number;
+  rowSpan: number;
+  isTotal: boolean;
+};
+
+type PivotRenderMetrics = {
+  rows: number;
+  columns: number;
+  cells: number;
+  columnCombinations: number;
+  mode: PivotRenderingMode;
+};
+
+type PivotRenderingMode = 'Hierarchical' | 'Compact' | 'Too Large';
 
 type IdentifierOperator = 'Equals' | 'Contains' | 'Starts With';
 
@@ -493,7 +514,32 @@ export class Pivot {
     },
   ];
 
-  protected pivotResult: PivotResult | null = null;
+  private readonly compactColumnCombinationThreshold = 500;
+  private readonly hardColumnCombinationThreshold = 5_000;
+  private readonly pivotColumnWarningThreshold = 200;
+  private readonly pivotColumnHardThreshold = 2_000;
+  private readonly renderCellThreshold = 200_000;
+  private _pivotResult: PivotResult | null = null;
+  protected cachedPivotHeaderCells: PivotHeaderCell[] = [];
+  protected cachedPivotHeaderDepth = 1;
+  protected displayedPivotRows: (string | number | boolean | null)[][] = [];
+  protected pivotRenderMetrics: PivotRenderMetrics = {
+    rows: 0,
+    columns: 0,
+    cells: 0,
+    columnCombinations: 0,
+    mode: 'Hierarchical',
+  };
+  protected pivotGridTemplateColumns = 'repeat(1, minmax(140px, 1fr))';
+
+  protected get pivotResult(): PivotResult | null {
+    return this._pivotResult;
+  }
+
+  protected set pivotResult(result: PivotResult | null) {
+    this._pivotResult = result;
+    this.preparePivotRendering(result);
+  }
 
   constructor() {
     effect(() => {
@@ -591,6 +637,14 @@ export class Pivot {
     return 'no-category';
   }
 
+  protected getFieldTooltip(field: PivotField): string {
+    return [
+      field.name,
+      `Type: ${this.getCategoryTag(field)}`,
+      `Distinct Values: ${this.formatMetricValue(field.distinctCount ?? 0)}`,
+    ].join('\n');
+  }
+
   protected getAggregations(field: PivotField): string[] {
     return field.category === 'AMOUNT' ? this.amountAggregations : this.discreteAggregations;
   }
@@ -623,6 +677,7 @@ export class Pivot {
     if (zoneKey !== 'availableFields' && !field.category) {
       this.openCategoryDialog(field, (category) => {
         this.updateFieldCategory(field.name, category);
+        this.warnIfLikelyHighCardinalityColumn(field.name, category, zoneKey);
         this.moveFieldByName(
           field.name,
           zoneKey,
@@ -634,6 +689,7 @@ export class Pivot {
       return;
     }
 
+    this.warnIfLikelyHighCardinalityColumn(field.name, field.category, zoneKey);
     this.moveFieldByName(
       field.name,
       zoneKey,
@@ -754,12 +810,417 @@ export class Pivot {
   }
 
   protected isTotalPivotRow(row: (string | number | boolean | null)[]): boolean {
-    return row[0] === 'Total' || String(row[0] ?? '').startsWith('Grand ');
+    const label = String(row[0] ?? '');
+    return label === 'Total' || label.startsWith('Total ') || label.startsWith('Grand ');
   }
 
   protected isTotalPivotColumn(index: number): boolean {
     const header = this.pivotResult?.headers[index] ?? '';
+    return this.isTotalPivotHeader(header);
+  }
+
+  protected get canRenderPivotResult(): boolean {
+    return this.pivotRenderMetrics.mode !== 'Too Large';
+  }
+
+  protected get pivotResultMetadataText(): string {
+    if (!this.pivotResult) {
+      return 'DuckDB result';
+    }
+
+    return [
+      `Rows: ${this.formatMetricValue(this.pivotRenderMetrics.rows)}`,
+      `Columns: ${this.formatMetricValue(this.pivotRenderMetrics.columns)}`,
+      `Mode: ${this.pivotRenderMetrics.mode}`,
+    ].join(' | ');
+  }
+
+  protected get formattedRenderedCellLimit(): string {
+    return this.renderCellThreshold.toLocaleString();
+  }
+
+  protected get formattedColumnCombinationLimit(): string {
+    return this.hardColumnCombinationThreshold.toLocaleString();
+  }
+
+  protected getPivotBodyGridRow(rowIndex: number): string {
+    return `${this.cachedPivotHeaderDepth + rowIndex + 1}`;
+  }
+
+  protected formatHeaderLabel(value: string | number | boolean | null): string {
+    if (value === null || value === undefined || value === '') {
+      return '(Blank)';
+    }
+
+    return String(value);
+  }
+
+  protected formatMetricValue(value: number): string {
+    return value.toLocaleString();
+  }
+
+  private getPivotHardLimitMessage(estimate: PivotEstimate): string {
+    if (estimate.projectedColumns <= this.pivotColumnHardThreshold) {
+      return '';
+    }
+
+    return [
+      `This Pivot would generate approximately ${this.formatMetricValue(estimate.projectedColumns)} columns.`,
+      `Maximum supported: ${this.formatMetricValue(this.pivotColumnHardThreshold)} columns.`,
+      'Reduce Columns or apply Filters.',
+    ].join(' ');
+  }
+
+  private getPivotEstimateWarning(estimate: PivotEstimate): string {
+    if (estimate.projectedColumns <= this.pivotColumnWarningThreshold) {
+      return '';
+    }
+
+    return `This Pivot may become difficult to read. Estimated columns: ${this.formatMetricValue(estimate.projectedColumns)}.`;
+  }
+
+  private warnIfLikelyHighCardinalityColumn(
+    fieldName: string,
+    category: ExplorerColumnCategory | null,
+    zoneKey: PivotZoneKey | 'availableFields',
+  ): void {
+    if (zoneKey !== 'columns') {
+      return;
+    }
+
+    const highCardinalityNamePattern = /(id|uuid|document|number|transaction|material|order)/i;
+    if (category === 'IDENTIFIER' || highCardinalityNamePattern.test(fieldName)) {
+      this.valuesHelperMessage = 'This field may generate a very large Pivot result.';
+    }
+  }
+
+  private preparePivotRendering(result: PivotResult | null): void {
+    if (!result) {
+      this.cachedPivotHeaderCells = [];
+      this.cachedPivotHeaderDepth = 1;
+      this.displayedPivotRows = [];
+      this.pivotRenderMetrics = {
+        rows: 0,
+        columns: 0,
+        cells: 0,
+        columnCombinations: 0,
+        mode: 'Hierarchical',
+      };
+      this.pivotGridTemplateColumns = 'repeat(1, minmax(140px, 1fr))';
+      return;
+    }
+
+    const columns = result.headers.length;
+    const columnCombinations = result.pivot?.columnValues?.length ?? 0;
+    this.displayedPivotRows = this.buildDisplayPivotRows(result);
+    const displayedRows = this.displayedPivotRows.length;
+    const dataRows = this.displayedPivotRows.filter((row) => !this.isTotalPivotRow(row)).length;
+    const dataColumns = this.countDataPivotColumns(result);
+    const cells = displayedRows * columns;
+    const mode = this.selectPivotRenderingMode(columnCombinations, cells);
+
+    this.cachedPivotHeaderCells =
+      mode === 'Hierarchical'
+        ? this.buildHierarchicalHeaderCells(result)
+        : mode === 'Compact'
+          ? this.buildCompactHeaderCells(result)
+          : [];
+    this.cachedPivotHeaderDepth =
+      this.cachedPivotHeaderCells.length === 0
+        ? 1
+        : Math.max(...this.cachedPivotHeaderCells.map((cell) => cell.row + cell.rowSpan - 1), 1);
+    this.pivotRenderMetrics = {
+      rows: dataRows,
+      columns: dataColumns,
+      cells,
+      columnCombinations,
+      mode,
+    };
+    this.pivotGridTemplateColumns = `repeat(${Math.max(result.headers.length, 1)}, minmax(140px, 1fr))`;
+  }
+
+  private buildDisplayPivotRows(result: PivotResult): (string | number | boolean | null)[][] {
+    const rowFieldCount = result.pivot?.rowFields.length ?? this.getZone('rows').fields.length;
+    const valueHeaders = this.getPivotValueHeaders(result, rowFieldCount);
+    if (valueHeaders.length === 0 || result.rows.length === 0) {
+      return result.rows;
+    }
+
+    if (result.pivot?.columnFields.length) {
+      return this.buildColumnPivotDisplayRows(result, rowFieldCount, valueHeaders);
+    }
+
+    return this.buildFlatPivotDisplayRows(result, rowFieldCount, valueHeaders);
+  }
+
+  private buildFlatPivotDisplayRows(
+    result: PivotResult,
+    rowFieldCount: number,
+    valueHeaders: string[],
+  ): (string | number | boolean | null)[][] {
+    if (result.rows.some((row) => this.isTotalPivotRow(row))) {
+      return result.rows;
+    }
+
+    const totalRows = valueHeaders.map((valueHeader, valueIndex) => {
+      const outputRow = this.createEmptyPivotRow(result.headers.length);
+      outputRow[0] = this.getTotalRowLabel(valueHeader, valueHeaders.length > 1);
+      for (let index = 1; index < rowFieldCount; index += 1) {
+        outputRow[index] = '';
+      }
+      outputRow[rowFieldCount + valueIndex] = this.calculateDisplayTotal(
+        valueHeader,
+        result.rows.map((row) => row[rowFieldCount + valueIndex]),
+      );
+      return outputRow;
+    });
+
+    return [...result.rows, ...totalRows];
+  }
+
+  private buildColumnPivotDisplayRows(
+    result: PivotResult,
+    rowFieldCount: number,
+    valueHeaders: string[],
+  ): (string | number | boolean | null)[][] {
+    const totalRowIndex = result.rows.findIndex((row) => this.isTotalPivotRow(row));
+    if (totalRowIndex < 0) {
+      return result.rows;
+    }
+
+    const totalRow = result.rows[totalRowIndex];
+    const dataRows = result.rows.filter((_, index) => index !== totalRowIndex);
+    if (valueHeaders.length === 1) {
+      const relabelledTotalRow = [...totalRow];
+      relabelledTotalRow[0] = this.getTotalRowLabel(valueHeaders[0], false);
+      return [...dataRows, relabelledTotalRow];
+    }
+
+    const splitTotalRows = valueHeaders.map((valueHeader, valueIndex) => {
+      const outputRow = this.createEmptyPivotRow(result.headers.length);
+      outputRow[0] = this.getTotalRowLabel(valueHeader, true);
+      for (let index = 1; index < rowFieldCount; index += 1) {
+        outputRow[index] = '';
+      }
+      for (let columnIndex = rowFieldCount + valueIndex; columnIndex < totalRow.length; columnIndex += valueHeaders.length) {
+        outputRow[columnIndex] = totalRow[columnIndex];
+      }
+      return outputRow;
+    });
+
+    return [...dataRows, ...splitTotalRows];
+  }
+
+  private countDataPivotColumns(result: PivotResult): number {
+    if (result.pivot?.columnFields.length && result.pivot.columnValues.length) {
+      return result.pivot.columnValues.length * Math.max(1, result.pivot.valueFields.length);
+    }
+
+    const rowFieldCount = result.pivot?.rowFields.length ?? this.getZone('rows').fields.length;
+    return result.headers.slice(rowFieldCount).filter((header) => !this.isTotalPivotHeader(header)).length;
+  }
+
+  private getPivotValueHeaders(result: PivotResult, rowFieldCount: number): string[] {
+    if (result.pivot?.valueFields.length) {
+      return result.pivot.valueFields;
+    }
+
+    return result.headers.slice(rowFieldCount);
+  }
+
+  private createEmptyPivotRow(length: number): (string | number | boolean | null)[] {
+    return Array.from({ length }, () => '');
+  }
+
+  private calculateDisplayTotal(header: string, values: (string | number | boolean | null)[]): number | string {
+    const numericValues = values
+      .map((value) => (typeof value === 'number' ? value : Number(value)))
+      .filter((value) => Number.isFinite(value));
+    if (numericValues.length === 0) {
+      return '';
+    }
+
+    const metricLabel = this.getMetricHeaderLabel(header, [header]);
+    if (metricLabel === 'Min') {
+      return Math.min(...numericValues);
+    }
+    if (metricLabel === 'Max') {
+      return Math.max(...numericValues);
+    }
+    if (metricLabel === 'Average' || metricLabel === 'Median') {
+      return numericValues.reduce((sum, value) => sum + value, 0) / numericValues.length;
+    }
+
+    return numericValues.reduce((sum, value) => sum + value, 0);
+  }
+
+  private getTotalRowLabel(valueHeader: string, multipleValues: boolean): string {
+    const metricLabel = this.getMetricHeaderLabel(valueHeader, [valueHeader]);
+    if (metricLabel === 'Sum') {
+      return multipleValues ? 'Total Sum' : 'Total';
+    }
+    if (metricLabel === 'Count') {
+      return multipleValues ? 'Total Count' : 'Total';
+    }
+
+    return `Grand ${metricLabel}`;
+  }
+
+  private selectPivotRenderingMode(columnCombinations: number, cells: number): PivotRenderingMode {
+    if (columnCombinations > this.hardColumnCombinationThreshold || cells > this.renderCellThreshold) {
+      return 'Too Large';
+    }
+
+    if (columnCombinations > this.compactColumnCombinationThreshold) {
+      return 'Compact';
+    }
+
+    return 'Hierarchical';
+  }
+
+  private isTotalPivotHeader(header: string): boolean {
     return header === 'Total' || header.startsWith('Total ') || header.startsWith('Grand ');
+  }
+
+  private buildCompactHeaderCells(result: PivotResult): PivotHeaderCell[] {
+    const compactLabels = this.buildCompactHeaderLabels(result);
+    return compactLabels.map((header, index) => ({
+      label: header,
+      column: index + 1,
+      row: 1,
+      columnSpan: 1,
+      rowSpan: 1,
+      isTotal: this.isTotalPivotHeader(header),
+    }));
+  }
+
+  private buildCompactHeaderLabels(result: PivotResult): string[] {
+    const metadata = result.pivot;
+    if (!metadata?.columnFields?.length || !metadata.columnValues.length) {
+      return result.headers;
+    }
+
+    const rowHeaders = result.headers.slice(0, metadata.rowFields.length);
+    const valueHeaders = metadata.valueFields.length > 0 ? metadata.valueFields : ['Value'];
+    const valueCount = valueHeaders.length;
+    const showMetricLevel = valueHeaders.length > 1;
+    const compactHeaders = [...rowHeaders];
+
+    for (const columnValue of metadata.columnValues) {
+      const pathParts = columnValue.map((value) => this.formatHeaderLabel(value));
+      for (const valueHeader of valueHeaders) {
+        compactHeaders.push(
+          showMetricLevel
+            ? [...pathParts, this.getMetricHeaderLabel(valueHeader, valueHeaders)].join(' / ')
+            : pathParts.join(' / '),
+        );
+      }
+    }
+
+    const totalStartIndex = metadata.rowFields.length + metadata.columnValues.length * valueCount;
+    compactHeaders.push(...result.headers.slice(totalStartIndex));
+    return compactHeaders;
+  }
+
+  private buildHierarchicalHeaderCells(result: PivotResult): PivotHeaderCell[] {
+    const metadata = result.pivot;
+    if (!metadata?.columnFields?.length || !metadata.columnValues.length) {
+      return result.headers.map((header, index) => ({
+        label: header,
+        column: index + 1,
+        row: 1,
+        columnSpan: 1,
+        rowSpan: 1,
+        isTotal: this.isTotalPivotHeader(header),
+      }));
+    }
+
+    const rowFieldCount = metadata.rowFields.length;
+    const valueHeaders = metadata.valueFields.length > 0 ? metadata.valueFields : ['Value'];
+    const valueCount = valueHeaders.length;
+    const showMetricLevel = valueHeaders.length > 1;
+    const headerDepth = metadata.columnFields.length + (showMetricLevel ? 1 : 0);
+    const cells: PivotHeaderCell[] = [];
+
+    for (let index = 0; index < rowFieldCount; index += 1) {
+      cells.push({
+        label: result.headers[index] ?? metadata.rowFields[index] ?? '',
+        column: index + 1,
+        row: 1,
+        columnSpan: 1,
+        rowSpan: headerDepth,
+        isTotal: false,
+      });
+    }
+
+    for (let level = 0; level < metadata.columnFields.length; level += 1) {
+      let groupStart = 0;
+      while (groupStart < metadata.columnValues.length) {
+        let groupEnd = groupStart + 1;
+        while (
+          groupEnd < metadata.columnValues.length &&
+          this.sameHeaderPrefix(metadata.columnValues[groupStart], metadata.columnValues[groupEnd], level)
+        ) {
+          groupEnd += 1;
+        }
+
+        cells.push({
+          label: this.formatHeaderLabel(metadata.columnValues[groupStart][level]),
+          column: rowFieldCount + groupStart * valueCount + 1,
+          row: level + 1,
+          columnSpan: (groupEnd - groupStart) * valueCount,
+          rowSpan: 1,
+          isTotal: false,
+        });
+
+        groupStart = groupEnd;
+      }
+    }
+
+    if (showMetricLevel) {
+      const metricRow = headerDepth;
+      metadata.columnValues.forEach((_, combinationIndex) => {
+        valueHeaders.forEach((valueHeader, valueIndex) => {
+          cells.push({
+            label: this.getMetricHeaderLabel(valueHeader, valueHeaders),
+            column: rowFieldCount + combinationIndex * valueCount + valueIndex + 1,
+            row: metricRow,
+            columnSpan: 1,
+            rowSpan: 1,
+            isTotal: false,
+          });
+        });
+      });
+    }
+
+    const firstTotalIndex = rowFieldCount + metadata.columnValues.length * valueCount;
+    const totalHeaders = result.headers.slice(firstTotalIndex);
+    if (totalHeaders.length > 0) {
+      cells.push({
+        label: showMetricLevel ? 'Total' : totalHeaders[0],
+        column: firstTotalIndex + 1,
+        row: 1,
+        columnSpan: totalHeaders.length,
+        rowSpan: showMetricLevel ? headerDepth - 1 : headerDepth,
+        isTotal: true,
+      });
+
+      if (showMetricLevel) {
+        const metricRow = headerDepth;
+        totalHeaders.forEach((header, index) => {
+          cells.push({
+            label: this.getMetricHeaderLabel(header, totalHeaders),
+            column: firstTotalIndex + index + 1,
+            row: metricRow,
+            columnSpan: 1,
+            rowSpan: 1,
+            isTotal: true,
+          });
+        });
+      }
+    }
+
+    return cells;
   }
 
   protected clearBuilder(): void {
@@ -788,15 +1249,40 @@ export class Pivot {
     this.isProcessing = true;
     this.valuesHelperMessage = '';
     this.pivotWarnings = [];
+    const request = this.createPivotRequest();
+    this.importApi.estimatePivot(datasetId, request).subscribe({
+      next: (estimate) => {
+        const hardLimitMessage = this.getPivotHardLimitMessage(estimate);
+        if (hardLimitMessage) {
+          this.isProcessing = false;
+          this.valuesHelperMessage = hardLimitMessage;
+          return;
+        }
+
+        const warningMessage = this.getPivotEstimateWarning(estimate);
+        if (warningMessage) {
+          this.pivotWarnings = [warningMessage];
+        }
+
+        this.executePivotRequest(datasetId, request);
+      },
+      error: () => {
+        this.isProcessing = false;
+        this.valuesHelperMessage = 'Pivot size could not be estimated.';
+      },
+    });
+  }
+
+  private executePivotRequest(datasetId: string, request: PivotRequest): void {
     const dialogRef = this.dialog.open(PivotProcessingDialog, {
       disableClose: true,
       width: '420px',
     });
 
-    this.importApi.executePivot(datasetId, this.createPivotRequest()).subscribe({
+    this.importApi.executePivot(datasetId, request).subscribe({
       next: (result) => {
         this.pivotResult = result;
-        this.pivotWarnings = result.warnings;
+        this.pivotWarnings = [...this.pivotWarnings, ...result.warnings];
         this.hasPendingChanges = false;
         this.isProcessing = false;
         this.savePivotState();
@@ -898,6 +1384,40 @@ export class Pivot {
     }
 
     return field.category === 'AMOUNT' ? 'Sum' : 'Count';
+  }
+
+  private sameHeaderPrefix(
+    left: (string | number | boolean | null)[],
+    right: (string | number | boolean | null)[],
+    level: number,
+  ): boolean {
+    for (let index = 0; index <= level; index += 1) {
+      if (String(left[index] ?? '') !== String(right[index] ?? '')) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private getMetricHeaderLabel(header: string, headers: string[]): string {
+    const aggregations = [...this.amountAggregations, ...this.discreteAggregations].sort(
+      (left, right) => right.length - left.length,
+    );
+    const aggregation = aggregations.find((item) => header.endsWith(` ${item}`));
+
+    if (!aggregation) {
+      return header;
+    }
+
+    const baseNames = headers.map((item) =>
+      aggregations.reduce((name, candidate) => {
+        return name.endsWith(` ${candidate}`) ? name.slice(0, -candidate.length - 1) : name;
+      }, item),
+    );
+    const hasMultipleValueFields = new Set(baseNames).size > 1;
+
+    return hasMultipleValueFields ? header : aggregation;
   }
 
   private markPending(): void {
@@ -1293,6 +1813,7 @@ export class Pivot {
           type: this.toPivotFieldType(column.type),
           dataType: column.type,
           category: categories[column.name] ?? null,
+          distinctCount: column.distinctCount,
         }));
         this.restorePivotState(activeProject.id);
         this.isLoadingFields = false;

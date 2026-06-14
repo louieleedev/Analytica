@@ -9,6 +9,7 @@ import {
   ExplorerFilterResult,
   DatasetOverview,
   ImportMethod,
+  PivotEstimate,
   ImportPreview,
   PivotRequest,
   PivotResult,
@@ -68,5 +69,9 @@ export class ImportApi {
 
   executePivot(datasetId: string, payload: PivotRequest) {
     return this.http.post<PivotResult>(`${this.apiBaseUrl}/datasets/${datasetId}/pivot`, payload);
+  }
+
+  estimatePivot(datasetId: string, payload: PivotRequest) {
+    return this.http.post<PivotEstimate>(`${this.apiBaseUrl}/datasets/${datasetId}/pivot/estimate`, payload);
   }
 }

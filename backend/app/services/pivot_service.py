@@ -18,6 +18,60 @@ DISCRETE_AGGREGATIONS = {"Count", "Distinct Count"}
 RESULT_LIMIT = 10_000
 
 
+def estimate_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    storage_info = get_dataset_storage_info(dataset_id)
+    if storage_info is None:
+        raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} was not found.")
+
+    row_fields = _normalise_field_list(payload.get("rows", []))
+    column_fields = _normalise_field_list(payload.get("columns", []))
+    value_fields = _normalise_field_list(payload.get("values", []))
+    filters = payload.get("filters", [])
+
+    _validate_columns(storage_info, [field["name"] for field in row_fields])
+    _validate_columns(storage_info, [field["name"] for field in column_fields])
+    _validate_columns(storage_info, [field["name"] for field in value_fields])
+    _validate_columns(
+        storage_info,
+        [str(filter_payload.get("columnName")) for filter_payload in filters if filter_payload.get("columnName")],
+    )
+
+    where_sql, parameters = _build_where_clause(storage_info, filters)
+    row_cardinalities = _estimate_field_cardinalities(storage_info, [field["name"] for field in row_fields], where_sql, parameters)
+    column_cardinalities = _estimate_field_cardinalities(
+        storage_info,
+        [field["name"] for field in column_fields],
+        where_sql,
+        parameters,
+    )
+    row_combinations = _multiply_cardinalities(row_cardinalities)
+    column_combinations = _multiply_cardinalities(column_cardinalities)
+    value_count = max(1, len(value_fields))
+    projected_columns = (
+        len(row_fields) + max(1, column_combinations) * value_count + value_count
+        if column_fields
+        else len(row_fields) + value_count
+    )
+
+    logger.info(
+        "Pivot estimate generated: dataset_id=%s row_combinations=%s column_combinations=%s projected_columns=%s",
+        dataset_id,
+        row_combinations,
+        column_combinations,
+        projected_columns,
+    )
+
+    return {
+        "datasetId": dataset_id,
+        "rowCombinations": row_combinations,
+        "columnCombinations": column_combinations,
+        "projectedColumns": projected_columns,
+        "valueCount": len(value_fields),
+        "rowCardinalities": row_cardinalities,
+        "columnCardinalities": column_cardinalities,
+    }
+
+
 def execute_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     storage_info = get_dataset_storage_info(dataset_id)
     if storage_info is None:
@@ -284,6 +338,41 @@ def _query_distinct_column_values(
         return [tuple(row) for row in rows]
 
     return []
+
+
+def _estimate_field_cardinalities(
+    storage_info: dict[str, Any],
+    column_names: list[str],
+    where_sql: str,
+    parameters: list[Any],
+) -> dict[str, int]:
+    cardinalities: dict[str, int] = {}
+    table_name = quote_identifier(str(storage_info["tableName"]))
+
+    for column_name in column_names:
+        quoted_column = quote_identifier(column_name)
+        for connection in get_connection():
+            row = connection.execute(
+                f"""
+                SELECT COUNT(DISTINCT {quoted_column})
+                FROM {table_name}
+                {where_sql}
+                """,
+                parameters,
+            ).fetchone()
+            cardinalities[column_name] = int(row[0] or 0) if row else 0
+
+    return cardinalities
+
+
+def _multiply_cardinalities(cardinalities: dict[str, int]) -> int:
+    if not cardinalities:
+        return 0
+
+    product = 1
+    for value in cardinalities.values():
+        product *= max(0, int(value))
+    return product
 
 
 def _build_column_pivot_headers(

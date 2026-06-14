@@ -211,6 +211,16 @@ export type PivotRequest = {
   filters: ExplorerFilterPayload[];
 };
 
+export type PivotEstimate = {
+  datasetId: string;
+  rowCombinations: number;
+  columnCombinations: number;
+  projectedColumns: number;
+  valueCount: number;
+  rowCardinalities: Record<string, number>;
+  columnCardinalities: Record<string, number>;
+};
+
 export type PivotResult = {
   datasetId: string;
   headers: string[];
@@ -218,4 +228,10 @@ export type PivotResult = {
   rowCount: number;
   warnings: string[];
   sql?: string;
+  pivot?: {
+    rowFields: string[];
+    columnFields: string[];
+    columnValues: (string | number | boolean | null)[][];
+    valueFields: string[];
+  };
 };
