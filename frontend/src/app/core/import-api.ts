@@ -2,6 +2,8 @@ import { HttpClient } from '@angular/common/http';
 import { Injectable, inject } from '@angular/core';
 
 import {
+  ApplicationSettings,
+  ApplicationSettingsResponse,
   ColumnProfile,
   DatasetFileType,
   ExplorerDataset,
@@ -73,5 +75,13 @@ export class ImportApi {
 
   estimatePivot(datasetId: string, payload: PivotRequest) {
     return this.http.post<PivotEstimate>(`${this.apiBaseUrl}/datasets/${datasetId}/pivot/estimate`, payload);
+  }
+
+  getSettings() {
+    return this.http.get<ApplicationSettingsResponse>(`${this.apiBaseUrl}/settings`);
+  }
+
+  updateSettings(settings: Partial<ApplicationSettings>) {
+    return this.http.patch<ApplicationSettingsResponse>(`${this.apiBaseUrl}/settings`, { settings });
   }
 }

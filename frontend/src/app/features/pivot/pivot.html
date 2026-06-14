@@ -228,19 +228,17 @@
 
       <section class="panel pivot-results" [class.stale]="hasPendingChanges && pivotResult">
         <div class="panel-heading">
-          <h2>Pivot Results</h2>
+          <div class="pivot-results-title">
+            <h2>Pivot Results</h2>
+            @if (pivotWarnings.length > 0) {
+              <span>{{ pivotWarnings.join(' ') }}</span>
+            }
+          </div>
           <span>{{ pivotResultMetadataText }}</span>
         </div>
         @if (hasPendingChanges && pivotResult) {
           <div class="pivot-stale-message">
             Pivot configuration changed. Apply Pivot to refresh results.
-          </div>
-        }
-        @if (pivotWarnings.length > 0) {
-          <div class="pivot-result-warnings">
-            @for (warning of pivotWarnings; track warning) {
-              <p>{{ warning }}</p>
-            }
           </div>
         }
         @if (pivotResult && displayedPivotRows.length > 0 && canRenderPivotResult) {

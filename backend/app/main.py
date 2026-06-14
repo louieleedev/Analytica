@@ -5,6 +5,11 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.services.application_settings import (
+    get_application_settings,
+    initialise_application_settings,
+    update_application_settings,
+)
 from app.services.dataset_profile import build_column_profile, build_dataset_overview
 from app.services.explorer_profile import (
     build_explorer_column_profile,
@@ -35,6 +40,10 @@ class ProjectUpdateRequest(BaseModel):
     description: str | None = None
 
 
+class SettingsUpdateRequest(BaseModel):
+    settings: dict[str, object] = Field(default_factory=dict)
+
+
 def create_app() -> FastAPI:
     logging.basicConfig(level=logging.INFO)
     app = FastAPI(title=settings.app_name)
@@ -55,6 +64,15 @@ def create_app() -> FastAPI:
     def startup() -> None:
         initialise_dataset_storage()
         initialise_project_storage()
+        initialise_application_settings()
+
+    @app.get("/settings", tags=["settings"])
+    def get_settings() -> dict:
+        return get_application_settings()
+
+    @app.patch("/settings", tags=["settings"])
+    def update_settings(payload: SettingsUpdateRequest) -> dict:
+        return update_application_settings(payload.settings)
 
     @app.post("/projects/import-preview", tags=["projects"])
     async def import_preview(

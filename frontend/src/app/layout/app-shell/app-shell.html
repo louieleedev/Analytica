@@ -43,7 +43,13 @@
       </mat-nav-list>
 
       <mat-nav-list class="nav bottom-nav" aria-label="Application navigation">
-        <a mat-list-item routerLink="/settings" routerLinkActive="active">
+        <a
+          mat-list-item
+          routerLink="/settings"
+          routerLinkActive="active"
+          [routerLinkActiveOptions]="{ exact: true }"
+          (click)="navigateToSettings($event)"
+        >
           <mat-icon matListItemIcon>settings</mat-icon>
           <span matListItemTitle>Settings</span>
         </a>

@@ -1,5 +1,5 @@
 import { Component, inject } from '@angular/core';
-import { RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
+import { Router, RouterLink, RouterLinkActive, RouterOutlet } from '@angular/router';
 import { MatIconModule } from '@angular/material/icon';
 import { MatListModule } from '@angular/material/list';
 import { MatSidenavModule } from '@angular/material/sidenav';
@@ -29,6 +29,7 @@ type ProjectNavItem = {
 })
 export class AppShell {
   protected readonly projectSelection = inject(ProjectSelection);
+  private readonly router = inject(Router);
 
   protected readonly projectNavItems: ProjectNavItem[] = [
     { label: 'Overview', icon: 'dashboard', route: '/project/overview' },
@@ -38,4 +39,9 @@ export class AppShell {
     { label: 'Visuals', icon: 'bar_chart', route: '/project/visuals' },
     { label: 'Reports', icon: 'description', route: '/project/reports' },
   ];
+
+  protected navigateToSettings(event: Event): void {
+    event.preventDefault();
+    void this.router.navigateByUrl('/settings');
+  }
 }

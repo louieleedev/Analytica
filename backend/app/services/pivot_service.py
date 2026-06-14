@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from app.db.duckdb import get_connection
+from app.services.application_settings import get_application_settings
 from app.services.dataset_profile import _numeric_expression
 from app.services.dataset_storage import get_dataset_storage_info, quote_identifier
 from app.services.explorer_profile import _build_where_clause
@@ -16,6 +17,7 @@ logger = logging.getLogger(__name__)
 AMOUNT_AGGREGATIONS = {"Sum", "Average", "Median", "Min", "Max", "Count", "Distinct Count"}
 DISCRETE_AGGREGATIONS = {"Count", "Distinct Count"}
 RESULT_LIMIT = 10_000
+DEFAULT_PIVOT_MAX_ROWS = 100
 
 
 def estimate_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -130,6 +132,9 @@ def execute_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     warnings = []
     if len(rows) >= RESULT_LIMIT:
         warnings.append(f"Pivot result is limited to the first {RESULT_LIMIT:,} rows.")
+    rows, row_limit_warning = _apply_pivot_row_limit(rows)
+    if row_limit_warning:
+        warnings.append(row_limit_warning)
 
     return {
         "datasetId": dataset_id,
@@ -214,6 +219,9 @@ def _execute_column_pivot(
     warnings = []
     if len(rows) >= RESULT_LIMIT:
         warnings.append(f"Pivot result is limited to the first {RESULT_LIMIT:,} rows.")
+    rows, row_limit_warning = _apply_pivot_row_limit(rows)
+    if row_limit_warning:
+        warnings.append(row_limit_warning)
 
     return {
         "datasetId": dataset_id,
@@ -373,6 +381,39 @@ def _multiply_cardinalities(cardinalities: dict[str, int]) -> int:
     for value in cardinalities.values():
         product *= max(0, int(value))
     return product
+
+
+def _apply_pivot_row_limit(rows: list[list[Any]]) -> tuple[list[list[Any]], str | None]:
+    max_rows = _get_pivot_max_rows()
+    data_rows = [row for row in rows if not _is_total_row(row)]
+    summary_rows = [row for row in rows if _is_total_row(row)]
+    total_data_rows = len(data_rows)
+
+    if total_data_rows <= max_rows:
+        return rows, None
+
+    limited_rows = data_rows[:max_rows] + summary_rows
+    return (
+        limited_rows,
+        f"Showing first {max_rows} of {total_data_rows} rows",
+    )
+
+
+def _get_pivot_max_rows() -> int:
+    settings = get_application_settings().get("settings", {})
+    value = settings.get("pivot_max_rows", DEFAULT_PIVOT_MAX_ROWS)
+    try:
+        return min(300, max(10, int(value)))
+    except (TypeError, ValueError):
+        return DEFAULT_PIVOT_MAX_ROWS
+
+
+def _is_total_row(row: list[Any]) -> bool:
+    if not row:
+        return False
+
+    label = str(row[0])
+    return label == "Total" or label.startswith("Total ") or label.startswith("Grand ")
 
 
 def _build_column_pivot_headers(

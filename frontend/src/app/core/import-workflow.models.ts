@@ -235,3 +235,17 @@ export type PivotResult = {
     valueFields: string[];
   };
 };
+
+export type ApplicationSettings = {
+  pivot_max_rows: number;
+  table_density: string;
+};
+
+export type ApplicationSettingsResponse = {
+  settings: ApplicationSettings;
+  items: {
+    key: keyof ApplicationSettings;
+    value: number | string;
+    updatedAt: string | null;
+  }[];
+};

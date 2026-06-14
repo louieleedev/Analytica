@@ -1,16 +1,84 @@
 <section class="page">
   <div class="page-header">
     <div>
-      <p class="eyebrow">Current Project</p>
+      <p class="eyebrow">Application</p>
       <h1>Settings</h1>
-      <p class="lede">Minimal local configuration for imports and previews.</p>
+      <p class="lede">Persistent local configuration for Analytica.</p>
     </div>
   </div>
 
-  <section class="panel settings-list">
-    <div><mat-icon>folder</mat-icon><span>Import Path</span><strong>C:\Analytica\Imports</strong></div>
-    <div><mat-icon>database</mat-icon><span>DuckDB Location</span><strong>backend\data\analytica.duckdb</strong></div>
-    <div><mat-icon>visibility</mat-icon><span>Preview Row Limit</span><strong>100</strong></div>
-    <div><mat-icon>palette</mat-icon><span>Theme</span><strong>Light</strong></div>
+  <section class="settings-page-grid">
+    @if (isLoading) {
+      <article class="panel settings-card">
+        <p class="settings-message">Loading settings...</p>
+      </article>
+    } @else {
+      <article class="panel settings-card">
+        <div class="settings-card-heading">
+          <mat-icon>pivot_table_chart</mat-icon>
+          <div>
+            <h2>Pivot</h2>
+            <p>Controls for Pivot result display limits.</p>
+          </div>
+        </div>
+
+        <label class="settings-control-row">
+          <span>
+            <strong>Maximum Pivot Rows</strong>
+            <small>Allowed range: 10 to 300 rows.</small>
+          </span>
+          <input
+            type="number"
+            min="10"
+            max="300"
+            [value]="settings.pivot_max_rows"
+            (input)="updatePivotMaxRows($event)"
+          />
+        </label>
+        @if (pivotMaxRowsError) {
+          <p class="settings-error">{{ pivotMaxRowsError }}</p>
+        }
+      </article>
+
+      <article class="panel settings-card">
+        <div class="settings-card-heading">
+          <mat-icon>table_rows</mat-icon>
+          <div>
+            <h2>Table Display</h2>
+            <p>Foundation setting for future table presentation controls.</p>
+          </div>
+        </div>
+
+        <label class="settings-control-row">
+          <span>
+            <strong>Density</strong>
+            <small>Controls the spacing of analytical tables.</small>
+          </span>
+          <select [value]="settings.table_density" (change)="updateTableDensity($event)">
+            <option value="comfort">comfort</option>
+            <option value="compact">compact</option>
+            <option value="dense">dense</option>
+          </select>
+        </label>
+      </article>
+
+      <div class="settings-footer">
+        <button
+          mat-flat-button
+          type="button"
+          [disabled]="!canSaveSettings"
+          (click)="saveSettings()"
+        >
+          Save Settings
+        </button>
+        @if (statusMessage) {
+          <span class="settings-status">{{ statusMessage }}</span>
+        }
+      </div>
+    }
+
+    @if (errorMessage) {
+      <p class="settings-error">{{ errorMessage }}</p>
+    }
   </section>
 </section>

@@ -1,11 +1,16 @@
 :host {
+  --app-scale: 1;
   display: block;
+  width: 100%;
   min-height: 100vh;
+  overflow: hidden;
 }
 
 .shell {
-  height: 100vh;
+  width: calc(100% / var(--app-scale));
+  height: calc(100vh / var(--app-scale));
   background: #f7f9fc;
+  zoom: var(--app-scale);
 }
 
 .sidebar {
@@ -141,7 +146,60 @@
   padding: 28px;
 }
 
+@media (max-width: 1600px) {
+  :host {
+    --app-scale: 0.98;
+  }
+}
+
+@media (max-width: 1440px) {
+  :host {
+    --app-scale: 0.96;
+  }
+
+  .sidebar {
+    width: 264px;
+  }
+
+  .page-frame {
+    padding: 22px;
+  }
+}
+
+@media (max-width: 1366px) {
+  :host {
+    --app-scale: 0.94;
+  }
+}
+
+@media (max-width: 1280px) {
+  :host {
+    --app-scale: 0.9;
+  }
+
+  .sidebar {
+    width: 236px;
+  }
+
+  .brand {
+    padding: 18px 16px 14px;
+  }
+
+  .nav {
+    gap: 10px;
+    padding-inline: 10px;
+  }
+
+  .page-frame {
+    padding: 18px;
+  }
+}
+
 @media (max-width: 900px) {
+  :host {
+    --app-scale: 1;
+  }
+
   .sidebar {
     width: 248px;
   }

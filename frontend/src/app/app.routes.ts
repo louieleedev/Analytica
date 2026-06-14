@@ -36,7 +36,7 @@ export const routes: Routes = [
       { path: 'project/pivot', component: Pivot, title: 'Pivot | Analytica' },
       { path: 'project/visuals', component: Visuals, title: 'Visuals | Analytica' },
       { path: 'project/reports', component: Reports, title: 'Reports | Analytica' },
-      { path: 'project/settings', redirectTo: 'settings' },
+      { path: 'project/settings', redirectTo: '/settings' },
       { path: 'settings', component: Settings, title: 'Settings | Analytica' },
       { path: '', pathMatch: 'full', redirectTo: 'projects' },
     ],
