@@ -172,9 +172,76 @@ def load_dataset(dataset_id: str) -> tuple[pd.DataFrame, str, list[dict[str, Any
     return None
 
 
+def get_dataset_storage_info(dataset_id: str) -> dict[str, Any] | None:
+    initialise_dataset_storage()
+
+    for connection in get_connection():
+        dataset_row = connection.execute(
+            """
+            SELECT dataset_id, table_name, dataset_type, row_count, column_count, dataset_size
+            FROM datasets
+            WHERE dataset_id = ?
+            """,
+            [dataset_id],
+        ).fetchone()
+        if dataset_row is None:
+            return None
+
+        files = [
+            {
+                "name": str(row[0]),
+                "size": int(row[1]),
+                "status": str(row[2]),
+            }
+            for row in connection.execute(
+                """
+                SELECT file_name, file_size, status
+                FROM dataset_files
+                WHERE dataset_id = ?
+                ORDER BY file_name
+                """,
+                [dataset_id],
+            ).fetchall()
+        ]
+        columns = [
+            {
+                "name": str(row[0]),
+                "type": str(row[1]),
+                "nullable": bool(row[2]),
+                "exampleValue": row[3],
+            }
+            for row in connection.execute(
+                """
+                SELECT column_name, detected_type, nullable, example_value
+                FROM dataset_columns
+                WHERE dataset_id = ?
+                ORDER BY column_order
+                """,
+                [dataset_id],
+            ).fetchall()
+        ]
+
+        return {
+            "datasetId": str(dataset_row[0]),
+            "tableName": str(dataset_row[1]),
+            "datasetType": str(dataset_row[2]),
+            "rowCount": int(dataset_row[3]),
+            "columnCount": int(dataset_row[4]),
+            "datasetSize": int(dataset_row[5]),
+            "files": files,
+            "columns": columns,
+        }
+
+    return None
+
+
 def build_dataset_table_name(dataset_id: str) -> str:
     safe_dataset_id = "".join(character for character in dataset_id.lower() if character.isalnum() or character == "_")
     return f"{DATASET_TABLE_PREFIX}{safe_dataset_id}"
+
+
+def quote_identifier(identifier: str) -> str:
+    return _quote_identifier(identifier)
 
 
 def _quote_identifier(identifier: str) -> str:

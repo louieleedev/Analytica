@@ -6,7 +6,9 @@ from typing import Any
 import pandas as pd
 from fastapi import HTTPException
 
-from app.services.import_workflow import _detect_column_type, _normalise_numeric_text, get_stored_dataset
+from app.db.duckdb import get_connection
+from app.services.dataset_storage import get_dataset_storage_info, quote_identifier
+from app.services.import_workflow import _detect_column_type, _normalise_numeric_text
 
 
 TOP_VALUE_LIMIT = 5
@@ -53,18 +55,17 @@ def build_dataset_overview(dataset_id: str) -> dict[str, Any]:
     if cache.overview is not None:
         return cache.overview
 
-    stored_dataset = get_stored_dataset(dataset_id)
-    frame = stored_dataset.frame
-    row_count = int(len(frame.index))
-    column_catalog = [_build_column_catalog_entry(frame, column_name) for column_name in frame.columns]
+    storage_info = _get_storage_info_or_404(dataset_id)
+    row_count = int(storage_info["rowCount"])
+    column_catalog = [_build_column_catalog_entry_from_duckdb(storage_info, column) for column in storage_info["columns"]]
 
     overview = {
         "datasetId": dataset_id,
         "summary": {
             "totalRows": row_count,
-            "totalColumns": int(len(frame.columns)),
-            "importedFiles": len(stored_dataset.files),
-            "datasetSize": int(sum(file["size"] for file in stored_dataset.files)),
+            "totalColumns": int(storage_info["columnCount"]),
+            "importedFiles": len(storage_info["files"]),
+            "datasetSize": int(storage_info["datasetSize"]),
         },
         "columns": column_catalog,
     }
@@ -77,10 +78,40 @@ def build_column_profile(dataset_id: str, column_name: str) -> dict[str, Any]:
     if column_name in cache.columns:
         return cache.columns[column_name]
 
-    stored_dataset = get_stored_dataset(dataset_id)
-    frame = stored_dataset.frame
-    profile = build_column_profile_for_frame(frame, column_name)
+    storage_info = _get_storage_info_or_404(dataset_id)
+    profile = build_column_profile_from_duckdb(storage_info, column_name)
     cache.columns[column_name] = profile
+    return profile
+
+
+def build_column_profile_from_duckdb(storage_info: dict[str, Any], column_name: str) -> dict[str, Any]:
+    column = _find_storage_column(storage_info, column_name)
+    data_type = str(column["type"])
+    category = _detect_column_category(column_name, data_type)
+    row_count, distinct_values, null_count = _query_base_column_stats(storage_info, column_name)
+    base_profile = {
+        "name": column_name,
+        "type": data_type,
+        "category": category,
+        "explorerCategory": None,
+        "rowCount": row_count,
+        "distinctValues": distinct_values,
+        "nullCount": null_count,
+        "topValues": _top_frequencies_duckdb(storage_info, column_name),
+    }
+
+    if category == "Measure":
+        profile = {**base_profile, **_numeric_profile_duckdb(storage_info, column_name)}
+    elif category == "Date":
+        profile = {**base_profile, **_date_profile_duckdb(storage_info, column_name)}
+    elif category == "Identifier":
+        profile = {**base_profile, **_identifier_profile_duckdb(storage_info, column_name)}
+    else:
+        profile = {
+            **base_profile,
+            "topFrequencies": _top_frequencies_duckdb(storage_info, column_name),
+        }
+
     return profile
 
 
@@ -148,6 +179,386 @@ def _build_column_catalog_entry(frame: pd.DataFrame, column_name: str) -> dict[s
         "nullCount": null_count,
         "populatedPercentage": round(populated_percentage, 2),
     }
+
+
+def _build_column_catalog_entry_from_duckdb(
+    storage_info: dict[str, Any],
+    column: dict[str, Any],
+) -> dict[str, Any]:
+    column_name = str(column["name"])
+    row_count, distinct_count, null_count = _query_base_column_stats(storage_info, column_name)
+    populated_percentage = 0 if row_count == 0 else ((row_count - null_count) / row_count) * 100
+    data_type = str(column["type"])
+
+    return {
+        "name": column_name,
+        "type": data_type,
+        "category": _detect_column_category(column_name, data_type),
+        "distinctCount": distinct_count,
+        "nullCount": null_count,
+        "populatedPercentage": round(populated_percentage, 2),
+    }
+
+
+def _get_storage_info_or_404(dataset_id: str) -> dict[str, Any]:
+    storage_info = get_dataset_storage_info(dataset_id)
+    if storage_info is None:
+        raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} was not found.")
+    return storage_info
+
+
+def _find_storage_column(storage_info: dict[str, Any], column_name: str) -> dict[str, Any]:
+    for column in storage_info["columns"]:
+        if column["name"] == column_name:
+            return column
+
+    raise HTTPException(status_code=404, detail=f"Column {column_name} was not found.")
+
+
+def _query_base_column_stats(storage_info: dict[str, Any], column_name: str) -> tuple[int, int, int]:
+    table_name = quote_identifier(storage_info["tableName"])
+    quoted_column = quote_identifier(column_name)
+
+    for connection in get_connection():
+        row = connection.execute(
+            f"""
+            SELECT
+                COUNT(*) AS row_count,
+                COUNT(DISTINCT {quoted_column}) AS distinct_count,
+                COUNT(*) - COUNT({quoted_column}) AS null_count
+            FROM {table_name}
+            """
+        ).fetchone()
+        return int(row[0]), int(row[1]), int(row[2])
+
+    return 0, 0, 0
+
+
+def _top_frequencies_duckdb(
+    storage_info: dict[str, Any],
+    column_name: str,
+    limit: int = TOP_VALUE_LIMIT,
+) -> list[dict[str, Any]]:
+    table_name = quote_identifier(storage_info["tableName"])
+    quoted_column = quote_identifier(column_name)
+    total = _non_null_count_duckdb(storage_info, column_name)
+    if total == 0:
+        return []
+
+    for connection in get_connection():
+        rows = connection.execute(
+            f"""
+            SELECT CAST({quoted_column} AS VARCHAR) AS value, COUNT(*) AS value_count
+            FROM {table_name}
+            WHERE {quoted_column} IS NOT NULL
+            GROUP BY {quoted_column}
+            ORDER BY value_count DESC, value ASC
+            LIMIT ?
+            """,
+            [limit],
+        ).fetchall()
+        return [
+            {
+                "value": str(value),
+                "count": int(count),
+                "percentage": round((int(count) / total) * 100, 2),
+            }
+            for value, count in rows
+        ]
+
+    return []
+
+
+def _non_null_count_duckdb(storage_info: dict[str, Any], column_name: str) -> int:
+    table_name = quote_identifier(storage_info["tableName"])
+    quoted_column = quote_identifier(column_name)
+
+    for connection in get_connection():
+        row = connection.execute(f"SELECT COUNT({quoted_column}) FROM {table_name}").fetchone()
+        return int(row[0])
+
+    return 0
+
+
+def _numeric_profile_duckdb(storage_info: dict[str, Any], column_name: str) -> dict[str, Any]:
+    numeric_expression = _numeric_expression(column_name)
+    table_name = quote_identifier(storage_info["tableName"])
+
+    for connection in get_connection():
+        row = connection.execute(
+            f"""
+            WITH numeric_values AS (
+                SELECT {numeric_expression} AS value
+                FROM {table_name}
+            )
+            SELECT
+                MIN(value),
+                MAX(value),
+                AVG(value),
+                MEDIAN(value),
+                SUM(value),
+                STDDEV_SAMP(value)
+            FROM numeric_values
+            WHERE value IS NOT NULL
+            """
+        ).fetchone()
+
+    if row is None or row[0] is None:
+        return {
+            "min": None,
+            "max": None,
+            "average": None,
+            "median": None,
+            "sum": None,
+            "standardDeviation": None,
+            "distribution": [],
+        }
+
+    return {
+        "min": _serialise_number(row[0]),
+        "max": _serialise_number(row[1]),
+        "average": _serialise_number(row[2]),
+        "median": _serialise_number(row[3]),
+        "sum": _serialise_number(row[4]),
+        "standardDeviation": _serialise_number(row[5]),
+        "distribution": _numeric_distribution_duckdb(storage_info, column_name),
+    }
+
+
+def _numeric_distribution_duckdb(storage_info: dict[str, Any], column_name: str) -> list[dict[str, Any]]:
+    numeric_expression = _numeric_expression(column_name)
+    table_name = quote_identifier(storage_info["tableName"])
+
+    for connection in get_connection():
+        rows = connection.execute(
+            f"""
+            WITH numeric_values AS (
+                SELECT {numeric_expression} AS value
+                FROM {table_name}
+            ),
+            bucketed_values AS (
+                SELECT
+                    CASE
+                        WHEN value < 0 THEN 'Negative'
+                        WHEN value >= 0 AND value < 1000 THEN '0 - 1k'
+                        WHEN value >= 1000 AND value < 10000 THEN '1k - 10k'
+                        WHEN value >= 10000 AND value < 100000 THEN '10k - 100k'
+                        WHEN value >= 100000 THEN '100k+'
+                    END AS bucket
+                FROM numeric_values
+                WHERE value IS NOT NULL
+            )
+            SELECT bucket, COUNT(*) AS bucket_count
+            FROM bucketed_values
+            GROUP BY bucket
+            """
+        ).fetchall()
+
+    counts = {str(label): int(count) for label, count in rows if label is not None}
+    total = sum(counts.values())
+    labels = ["Negative", "0 - 1k", "1k - 10k", "10k - 100k", "100k+"]
+    return [
+        {
+            "label": label,
+            "count": counts.get(label, 0),
+            "percentage": round((counts.get(label, 0) / total) * 100, 2) if total else 0,
+        }
+        for label in labels
+    ]
+
+
+def _identifier_profile_duckdb(storage_info: dict[str, Any], column_name: str) -> dict[str, Any]:
+    table_name = quote_identifier(storage_info["tableName"])
+    quoted_column = quote_identifier(column_name)
+
+    for connection in get_connection():
+        row = connection.execute(
+            f"""
+            WITH value_counts AS (
+                SELECT {quoted_column} AS value, COUNT(*) AS value_count
+                FROM {table_name}
+                WHERE {quoted_column} IS NOT NULL
+                GROUP BY {quoted_column}
+            )
+            SELECT
+                COALESCE(SUM(CASE WHEN value_count = 1 THEN 1 ELSE 0 END), 0) AS unique_values,
+                COALESCE(SUM(value_count), 0) AS non_null_total
+            FROM value_counts
+            """
+        ).fetchone()
+
+    unique_count = int(row[0] or 0)
+    non_null_total = int(row[1] or 0)
+    duplicate_count = int(non_null_total - unique_count)
+    unique_percentage = 0 if non_null_total == 0 else (unique_count / non_null_total) * 100
+
+    return {
+        "uniqueValues": unique_count,
+        "duplicateValues": duplicate_count,
+        "uniquePercentage": round(unique_percentage, 2),
+        "duplicatePercentage": round(max(0, 100 - unique_percentage), 2) if non_null_total else 0,
+        "mostFrequentIds": _top_frequencies_duckdb(storage_info, column_name, limit=10),
+    }
+
+
+def _date_profile_duckdb(storage_info: dict[str, Any], column_name: str) -> dict[str, Any]:
+    date_expression = _date_expression(column_name)
+    table_name = quote_identifier(storage_info["tableName"])
+
+    for connection in get_connection():
+        row = connection.execute(
+            f"""
+            WITH date_values AS (
+                SELECT {date_expression} AS value
+                FROM {table_name}
+            )
+            SELECT MIN(value), MAX(value)
+            FROM date_values
+            WHERE value IS NOT NULL
+            """
+        ).fetchone()
+
+    if row is None or row[0] is None:
+        return {
+            "earliestDate": None,
+            "latestDate": None,
+        }
+
+    return {
+        "earliestDate": _serialise_datetime(row[0]),
+        "latestDate": _serialise_datetime(row[1]),
+        "dateRange": f"{row[0].date().isoformat()} - {row[1].date().isoformat()}",
+        "mostActiveMonth": _most_active_month_duckdb(storage_info, column_name),
+        "mostActiveYear": _most_active_year_duckdb(storage_info, column_name),
+        "timelineDistribution": _date_distribution_duckdb(storage_info, column_name),
+    }
+
+
+def _most_active_month_duckdb(storage_info: dict[str, Any], column_name: str) -> str | None:
+    date_expression = _date_expression(column_name)
+    table_name = quote_identifier(storage_info["tableName"])
+
+    for connection in get_connection():
+        row = connection.execute(
+            f"""
+            WITH date_values AS (
+                SELECT {date_expression} AS value
+                FROM {table_name}
+            )
+            SELECT strftime(value, '%Y-%m') AS period, COUNT(*) AS period_count
+            FROM date_values
+            WHERE value IS NOT NULL
+            GROUP BY period
+            ORDER BY period_count DESC, period ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    return None
+
+
+def _most_active_year_duckdb(storage_info: dict[str, Any], column_name: str) -> str | None:
+    date_expression = _date_expression(column_name)
+    table_name = quote_identifier(storage_info["tableName"])
+
+    for connection in get_connection():
+        row = connection.execute(
+            f"""
+            WITH date_values AS (
+                SELECT {date_expression} AS value
+                FROM {table_name}
+            )
+            SELECT CAST(EXTRACT(year FROM value) AS VARCHAR) AS period, COUNT(*) AS period_count
+            FROM date_values
+            WHERE value IS NOT NULL
+            GROUP BY period
+            ORDER BY period_count DESC, period ASC
+            LIMIT 1
+            """
+        ).fetchone()
+        return None if row is None else str(row[0])
+
+    return None
+
+
+def _date_distribution_duckdb(storage_info: dict[str, Any], column_name: str) -> list[dict[str, Any]]:
+    date_expression = _date_expression(column_name)
+    table_name = quote_identifier(storage_info["tableName"])
+
+    for connection in get_connection():
+        rows = connection.execute(
+            f"""
+            WITH date_values AS (
+                SELECT {date_expression} AS value
+                FROM {table_name}
+            ),
+            period_counts AS (
+                SELECT strftime(value, '%Y-%m') AS period, COUNT(*) AS period_count
+                FROM date_values
+                WHERE value IS NOT NULL
+                GROUP BY period
+            ),
+            total_count AS (
+                SELECT SUM(period_count) AS total FROM period_counts
+            )
+            SELECT period, period_count, total
+            FROM period_counts, total_count
+            ORDER BY period DESC
+            LIMIT 12
+            """
+        ).fetchall()
+
+    return [
+        {
+            "label": str(period),
+            "count": int(count),
+            "percentage": round((int(count) / int(total)) * 100, 2) if int(total or 0) else 0,
+        }
+        for period, count, total in reversed(rows)
+    ]
+
+
+def _numeric_expression(column_name: str) -> str:
+    quoted_column = quote_identifier(column_name)
+    text_value = f"regexp_replace(trim(CAST({quoted_column} AS VARCHAR)), '\\\\s+', '', 'g')"
+    return f"""
+        CASE
+            WHEN {quoted_column} IS NULL THEN NULL
+            WHEN strpos({text_value}, ',') > 0
+                AND strpos({text_value}, '.') = 0
+                THEN try_cast(replace({text_value}, ',', '.') AS DOUBLE)
+            WHEN strpos({text_value}, ',') > 0
+                AND strpos({text_value}, '.') > 0
+                AND strpos(reverse({text_value}), ',') < strpos(reverse({text_value}), '.')
+                THEN try_cast(replace(replace({text_value}, '.', ''), ',', '.') AS DOUBLE)
+            WHEN strpos({text_value}, ',') > 0
+                AND strpos({text_value}, '.') > 0
+                THEN try_cast(replace({text_value}, ',', '') AS DOUBLE)
+            ELSE try_cast({text_value} AS DOUBLE)
+        END
+    """
+
+
+def _date_expression(column_name: str) -> str:
+    quoted_column = quote_identifier(column_name)
+    text_value = f"trim(CAST({quoted_column} AS VARCHAR))"
+    return f"""
+        COALESCE(
+            try_cast({quoted_column} AS TIMESTAMP),
+            try_strptime({text_value}, [
+                '%Y-%m-%d',
+                '%Y-%m-%d %H:%M:%S',
+                '%d.%m.%Y',
+                '%d.%m.%Y %H:%M:%S',
+                '%d/%m/%Y',
+                '%d/%m/%Y %H:%M:%S',
+                '%Y/%m/%d',
+                '%d-%m-%Y',
+                '%Y%m%d'
+            ])
+        )
+    """
 
 
 def _numeric_profile(series: pd.Series) -> dict[str, Any]:
@@ -333,3 +744,11 @@ def _serialise_number(value: Any) -> int | float | None:
     if isinstance(value, float):
         return round(value, 4)
     return value
+
+
+def _serialise_datetime(value: Any) -> str | None:
+    if value is None or pd.isna(value):
+        return None
+    if hasattr(value, "isoformat"):
+        return value.isoformat()
+    return str(value)
