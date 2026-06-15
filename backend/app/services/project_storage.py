@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import logging
 from typing import Any
 from uuid import uuid4
 
@@ -7,6 +8,9 @@ from fastapi import HTTPException
 
 from app.db.duckdb import get_connection
 from app.services.dataset_storage import initialise_dataset_storage
+
+
+logger = logging.getLogger(__name__)
 
 
 def initialise_project_storage() -> None:
@@ -61,37 +65,47 @@ def create_project_record(name: str, description: str, dataset_id: str | None) -
 def list_project_records() -> list[dict[str, Any]]:
     initialise_project_storage()
 
-    for connection in get_connection():
-        rows = connection.execute(
-            """
-            SELECT
-                p.project_id,
-                p.name,
-                p.description,
-                p.status,
-                p.state,
-                p.dataset_id,
-                p.created_at,
-                p.updated_at,
-                d.dataset_type,
-                d.row_count,
-                d.column_count,
-                d.dataset_size,
-                COALESCE(f.file_count, 0) AS file_count
-            FROM projects p
-            LEFT JOIN datasets d ON d.dataset_id = p.dataset_id
-            LEFT JOIN (
-                SELECT dataset_id, COUNT(*) AS file_count
-                FROM dataset_files
-                GROUP BY dataset_id
-            ) f ON f.dataset_id = p.dataset_id
-            ORDER BY p.created_at DESC
-            """
-        ).fetchall()
+    try:
+        for connection in get_connection():
+            rows = connection.execute(
+                """
+                SELECT
+                    p.project_id,
+                    p.name,
+                    p.description,
+                    p.status,
+                    p.state,
+                    p.dataset_id,
+                    p.created_at,
+                    p.updated_at,
+                    d.dataset_type,
+                    d.row_count,
+                    d.column_count,
+                    d.dataset_size,
+                    COALESCE(f.file_count, 0) AS file_count
+                FROM projects p
+                LEFT JOIN datasets d ON d.dataset_id = p.dataset_id
+                LEFT JOIN (
+                    SELECT dataset_id, COUNT(*) AS file_count
+                    FROM dataset_files
+                    GROUP BY dataset_id
+                ) f ON f.dataset_id = p.dataset_id
+                ORDER BY p.created_at DESC
+                """
+            ).fetchall()
 
-        return [_serialise_project(row) for row in rows]
+            logger.info("Projects loaded from DuckDB: count=%s", len(rows))
+            return [_serialise_project(row) for row in rows]
+    except HTTPException:
+        raise
+    except Exception as exc:
+        logger.exception("Project loading failed: error=%s", exc)
+        raise HTTPException(
+            status_code=503,
+            detail=f"Projects could not be loaded from DuckDB: {exc}",
+        ) from exc
 
-    return []
+    raise HTTPException(status_code=503, detail="Projects could not be loaded from DuckDB.")
 
 
 def get_project_record(project_id: str) -> dict[str, Any]:

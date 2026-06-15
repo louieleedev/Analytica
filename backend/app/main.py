@@ -5,6 +5,7 @@ from fastapi import FastAPI, File, Form, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.core.config import settings
+from app.db.duckdb import close_connection, get_duckdb_diagnostics, log_duckdb_diagnostics
 from app.services.chart_service import build_chart_result
 from app.services.application_settings import (
     get_application_settings,
@@ -61,11 +62,21 @@ def create_app() -> FastAPI:
     def health() -> dict[str, str]:
         return {"status": "ok"}
 
+    @app.get("/diagnostics/duckdb", tags=["system"])
+    def duckdb_diagnostics() -> dict:
+        return get_duckdb_diagnostics()
+
     @app.on_event("startup")
     def startup() -> None:
         initialise_dataset_storage()
         initialise_project_storage()
         initialise_application_settings()
+        log_duckdb_diagnostics("startup")
+
+    @app.on_event("shutdown")
+    def shutdown() -> None:
+        log_duckdb_diagnostics("shutdown")
+        close_connection()
 
     @app.get("/settings", tags=["settings"])
     def get_settings() -> dict:
