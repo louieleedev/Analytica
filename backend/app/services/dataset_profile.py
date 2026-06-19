@@ -50,6 +50,10 @@ class ProfileCacheEntry:
 PROFILE_CACHE: dict[str, ProfileCacheEntry] = {}
 
 
+def invalidate_dataset_profile_cache(dataset_id: str) -> None:
+    PROFILE_CACHE.pop(dataset_id, None)
+
+
 def build_dataset_overview(dataset_id: str) -> dict[str, Any]:
     cache = PROFILE_CACHE.setdefault(dataset_id, ProfileCacheEntry())
     if cache.overview is not None:
@@ -66,6 +70,7 @@ def build_dataset_overview(dataset_id: str) -> dict[str, Any]:
             "totalColumns": int(storage_info["columnCount"]),
             "importedFiles": len(storage_info["files"]),
             "datasetSize": int(storage_info["datasetSize"]),
+            "hasHeaders": bool(storage_info.get("hasHeaders", True)),
         },
         "columns": column_catalog,
     }

@@ -13,6 +13,11 @@ from app.services.application_settings import (
     update_application_settings,
 )
 from app.services.dataset_profile import build_column_profile, build_dataset_overview
+from app.services.dataset_management import (
+    append_files_to_dataset,
+    get_dataset_management_summary,
+    remove_file_from_dataset,
+)
 from app.services.explorer_profile import (
     build_explorer_column_profile,
     build_explorer_dataset,
@@ -35,6 +40,8 @@ class ProjectCreateRequest(BaseModel):
     name: str
     description: str
     dataset_id: str | None = Field(default=None, alias="datasetId")
+    has_headers: bool = Field(default=True, alias="hasHeaders")
+    schema_columns: list[str] = Field(default_factory=list, alias="schemaColumns")
 
 
 class ProjectUpdateRequest(BaseModel):
@@ -90,9 +97,10 @@ def create_app() -> FastAPI:
     async def import_preview(
         import_method: str = Form(...),
         expected_file_type: str | None = Form(None),
+        has_headers: bool = Form(True),
         files: list[UploadFile] = File(...),
     ) -> dict:
-        return await build_import_preview(files, import_method, expected_file_type)
+        return await build_import_preview(files, import_method, expected_file_type, has_headers)
 
     @app.post("/projects", tags=["projects"])
     def create_project(payload: ProjectCreateRequest) -> dict:
@@ -100,6 +108,8 @@ def create_app() -> FastAPI:
             payload.name.strip(),
             payload.description.strip(),
             payload.dataset_id,
+            payload.has_headers,
+            payload.schema_columns,
         )
 
     @app.get("/projects", tags=["projects"])
@@ -126,6 +136,23 @@ def create_app() -> FastAPI:
     @app.get("/datasets/{dataset_id}/overview", tags=["datasets"])
     def dataset_overview(dataset_id: str) -> dict:
         return build_dataset_overview(dataset_id)
+
+    @app.get("/datasets/{dataset_id}/management", tags=["datasets"])
+    async def dataset_management_summary(dataset_id: str) -> dict:
+        return await get_dataset_management_summary(dataset_id)
+
+    @app.post("/datasets/{dataset_id}/files", tags=["datasets"])
+    async def dataset_add_files(
+        dataset_id: str,
+        import_method: str = Form(...),
+        expected_file_type: str | None = Form(None),
+        files: list[UploadFile] = File(...),
+    ) -> dict:
+        return await append_files_to_dataset(dataset_id, files, import_method, expected_file_type)
+
+    @app.delete("/datasets/{dataset_id}/files/{file_id}", tags=["datasets"])
+    async def dataset_delete_file(dataset_id: str, file_id: str) -> dict:
+        return await remove_file_from_dataset(dataset_id, file_id)
 
     @app.get("/datasets/{dataset_id}/columns/profile", tags=["datasets"])
     def dataset_column_profile(dataset_id: str, column_name: str) -> dict:

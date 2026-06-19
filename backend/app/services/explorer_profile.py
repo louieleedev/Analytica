@@ -33,6 +33,10 @@ FILTER_VALUE_LIMIT = 250
 TOP_VALUE_LIMIT = 5
 
 
+def invalidate_explorer_dataset_cache(dataset_id: str) -> None:
+    EXPLORER_DATASET_CACHE.pop(dataset_id, None)
+
+
 def build_explorer_dataset(dataset_id: str) -> dict[str, Any]:
     cached = EXPLORER_DATASET_CACHE.get(dataset_id)
     if cached is not None:

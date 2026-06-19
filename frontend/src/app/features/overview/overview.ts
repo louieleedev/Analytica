@@ -48,6 +48,11 @@ export class Overview implements OnInit {
         value: summary ? this.formatBytes(summary.datasetSize) : '-',
         icon: 'database',
       },
+      {
+        label: 'Schema Mode',
+        value: summary ? (summary.hasHeaders ? 'Headers Included' : 'Manual Schema') : '-',
+        icon: 'view_week',
+      },
     ];
   });
 

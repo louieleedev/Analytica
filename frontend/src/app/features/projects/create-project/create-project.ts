@@ -72,6 +72,7 @@ export class CreateProject implements OnInit, AfterViewInit {
   protected selectedFolderFiles: File[] = [];
   protected selectedFolderPath = '';
   protected importPreview: ImportPreview | null = null;
+  protected hasHeaders = true;
   protected validationError = '';
   protected isValidating = false;
   private allowNavigation = false;
@@ -218,6 +219,56 @@ export class CreateProject implements OnInit, AfterViewInit {
     this.validationError = '';
   }
 
+  protected selectSchemaMode(hasHeaders: boolean): void {
+    if (this.hasHeaders === hasHeaders) {
+      return;
+    }
+
+    this.hasHeaders = hasHeaders;
+    this.importPreview = null;
+    this.validationError = '';
+  }
+
+  protected updateSchemaColumnName(index: number, value: string): void {
+    if (!this.importPreview?.schema[index]) {
+      return;
+    }
+
+    const previousName = this.importPreview.schema[index].name;
+    const nextName = value;
+    this.importPreview.schema[index] = {
+      ...this.importPreview.schema[index],
+      name: nextName,
+    };
+    if (this.importPreview.preview.columns[index] === previousName) {
+      this.importPreview.preview.columns[index] = nextName;
+    }
+  }
+
+  protected get schemaValidationMessage(): string {
+    const names = this.schemaColumnNames();
+    if (!names.length) {
+      return '';
+    }
+    if (names.some((name) => !name.trim())) {
+      return 'Every column must have a name.';
+    }
+    const tooLong = names.find((name) => name.trim().length > 120);
+    if (tooLong) {
+      return 'Column names must be 120 characters or fewer.';
+    }
+    const normalisedNames = names.map((name) => name.trim().toLowerCase());
+    const duplicate = normalisedNames.find((name, index) => normalisedNames.indexOf(name) !== index);
+    if (duplicate) {
+      return 'Duplicate column names are not allowed.';
+    }
+    return '';
+  }
+
+  protected isSchemaValid(): boolean {
+    return !!this.importPreview && !this.schemaValidationMessage;
+  }
+
   protected onFilesSelected(event: Event): void {
     const input = event.target as HTMLInputElement;
     this.selectedFiles = this.appendUniqueFiles(this.selectedFiles, Array.from(input.files ?? []));
@@ -261,7 +312,7 @@ export class CreateProject implements OnInit, AfterViewInit {
     this.validationError = '';
 
     this.importApi
-      .createImportPreview(this.importMethod, this.selectedFileType, this.activeFiles)
+      .createImportPreview(this.importMethod, this.selectedFileType, this.activeFiles, this.hasHeaders)
       .subscribe({
         next: (preview) => {
           this.importPreview = preview;
@@ -291,6 +342,8 @@ export class CreateProject implements OnInit, AfterViewInit {
           this.projectName.trim(),
           this.description.trim(),
           this.importPreview,
+          this.hasHeaders,
+          this.schemaColumnNames(),
         )
         .subscribe({
           next: () => {
@@ -303,7 +356,13 @@ export class CreateProject implements OnInit, AfterViewInit {
         });
     } else {
       this.projectSelection
-        .createProject(this.projectName.trim(), this.description.trim(), this.importPreview)
+        .createProject(
+          this.projectName.trim(),
+          this.description.trim(),
+          this.importPreview,
+          this.hasHeaders,
+          this.schemaColumnNames(),
+        )
         .subscribe({
           next: () => {
             this.allowNavigation = true;
@@ -359,6 +418,7 @@ export class CreateProject implements OnInit, AfterViewInit {
       selectedFolderFiles: this.selectedFolderFiles,
       selectedFolderPath: this.selectedFolderPath,
       importPreview: this.importPreview,
+      hasHeaders: this.hasHeaders,
     };
   }
 
@@ -372,6 +432,7 @@ export class CreateProject implements OnInit, AfterViewInit {
     this.selectedFolderFiles = draft.selectedFolderFiles;
     this.selectedFolderPath = draft.selectedFolderPath;
     this.importPreview = draft.importPreview;
+    this.hasHeaders = draft.hasHeaders ?? true;
     this.syncStepperIndex();
   }
 
@@ -426,6 +487,7 @@ export class CreateProject implements OnInit, AfterViewInit {
       selectedFileCount: this.selectedFiles.length,
       selectedFolderFileCount: this.selectedFolderFiles.length,
       selectedFolderPath: this.selectedFolderPath,
+      hasHeaders: this.hasHeaders,
       hasImportPreview: this.importPreview !== null,
     };
   }
@@ -439,6 +501,10 @@ export class CreateProject implements OnInit, AfterViewInit {
       this.selectedFolderFiles.length > 0 ||
       this.importPreview !== null
     );
+  }
+
+  private schemaColumnNames(): string[] {
+    return (this.importPreview?.schema ?? []).map((column) => column.name.trim());
   }
 
   private getSelectedFolderPath(files: File[]): string {

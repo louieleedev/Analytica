@@ -8,6 +8,7 @@ import {
   ChartResult,
   ColumnProfile,
   DatasetFileType,
+  DatasetManagementSummary,
   ExplorerDataset,
   ExplorerFilterRequest,
   ExplorerFilterResult,
@@ -28,10 +29,12 @@ export class ImportApi {
     importMethod: ImportMethod,
     expectedFileType: DatasetFileType,
     files: File[],
+    hasHeaders = true,
   ) {
     const formData = new FormData();
     formData.append('import_method', importMethod);
     formData.append('expected_file_type', expectedFileType);
+    formData.append('has_headers', String(hasHeaders));
 
     for (const file of files) {
       const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
@@ -43,6 +46,34 @@ export class ImportApi {
 
   getDatasetOverview(datasetId: string) {
     return this.http.get<DatasetOverview>(`${this.apiBaseUrl}/datasets/${datasetId}/overview`);
+  }
+
+  getDatasetManagementSummary(datasetId: string) {
+    return this.http.get<DatasetManagementSummary>(`${this.apiBaseUrl}/datasets/${datasetId}/management`);
+  }
+
+  appendDatasetFiles(
+    datasetId: string,
+    importMethod: ImportMethod,
+    expectedFileType: DatasetFileType,
+    files: File[],
+  ) {
+    const formData = new FormData();
+    formData.append('import_method', importMethod);
+    formData.append('expected_file_type', expectedFileType);
+
+    for (const file of files) {
+      const relativePath = (file as File & { webkitRelativePath?: string }).webkitRelativePath;
+      formData.append('files', file, importMethod === 'folder' && relativePath ? relativePath : file.name);
+    }
+
+    return this.http.post<DatasetManagementSummary>(`${this.apiBaseUrl}/datasets/${datasetId}/files`, formData);
+  }
+
+  deleteDatasetFile(datasetId: string, fileId: string) {
+    return this.http.delete<DatasetManagementSummary>(
+      `${this.apiBaseUrl}/datasets/${datasetId}/files/${encodeURIComponent(fileId)}`,
+    );
   }
 
   getColumnProfile(datasetId: string, columnName: string) {

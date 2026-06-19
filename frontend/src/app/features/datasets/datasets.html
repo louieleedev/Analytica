@@ -3,70 +3,170 @@
     <div>
       <p class="eyebrow">Current Project</p>
       <h1>Datasets</h1>
-      <p class="lede">Manage imported CSV, Excel, and folder-based files sharing one schema.</p>
+      <p class="lede">Manage imported files that belong to the active logical dataset.</p>
     </div>
   </div>
 
-  <div class="datasets-grid">
-    <section class="panel upload-zone">
-      <mat-icon>cloud_upload</mat-icon>
-      <h2>Drag & drop structured files</h2>
-      <p>Upload CSV, XLSX, or a folder. All files must share the same schema.</p>
-      <div class="button-row">
-        <button mat-flat-button type="button">Select Files</button>
-        <button mat-stroked-button type="button">Folder Selection</button>
-      </div>
+  @if (errorMessage()) {
+    <div class="wizard-error">
+      <mat-icon>error</mat-icon>
+      <span>{{ errorMessage() }}</span>
+    </div>
+  }
+
+  @if (successMessage()) {
+    <div class="dataset-success">
+      <mat-icon>check_circle</mat-icon>
+      <span>{{ successMessage() }}</span>
+    </div>
+  }
+
+  @if (isLoading()) {
+    <section class="panel loading-state">
+      <mat-spinner diameter="34"></mat-spinner>
+      <p>Loading dataset metadata...</p>
     </section>
-
-    <aside class="panel storage-panel">
-      <div class="panel-heading"><h2>Import progress</h2><span>Prototype</span></div>
-      <div class="storage-body">
-        <strong>financial_export_q3.csv</strong>
-        <div class="progress-track"><span></span></div>
-        <p>Project size: 37.4 GB</p>
-      </div>
-    </aside>
-  </div>
-
-  <section class="panel">
-    <div class="panel-heading">
-      <h2>Dataset preview</h2>
-      <span>Static sample rows</span>
+  } @else if (dataset(); as managedDataset) {
+    <div class="metric-grid dataset-metric-grid">
+      @for (metric of metrics(); track metric.label) {
+        <section class="panel metric">
+          <mat-icon>{{ metric.icon }}</mat-icon>
+          <span>{{ metric.label }}</span>
+          <strong>{{ metric.value }}</strong>
+        </section>
+      }
     </div>
-    <div class="dataset-preview-table">
-      <div class="dataset-preview-row header">
-        @for (column of previewColumns; track column) {
-          <span>{{ column }}</span>
+
+    <div class="datasets-grid">
+      <section class="panel upload-zone">
+        <mat-icon>cloud_upload</mat-icon>
+        <h2>Add files to this dataset</h2>
+        <p>Upload CSV, XLSX, or a folder. New files must match the existing schema.</p>
+        <div class="dataset-file-type-switch">
+          <button
+            mat-stroked-button
+            type="button"
+            [class.selected]="selectedFileType === 'CSV'"
+            (click)="selectFileType('CSV')"
+          >
+            CSV
+          </button>
+          <button
+            mat-stroked-button
+            type="button"
+            [class.selected]="selectedFileType === 'XLSX'"
+            (click)="selectFileType('XLSX')"
+          >
+            XLSX
+          </button>
+        </div>
+        <div class="button-row">
+          <button mat-flat-button type="button" [disabled]="isUploading()" (click)="openFilePicker()">
+            <mat-icon>upload_file</mat-icon>
+            Select Files
+          </button>
+          <button mat-stroked-button type="button" [disabled]="isUploading()" (click)="openFolderPicker()">
+            <mat-icon>folder_open</mat-icon>
+            Folder Selection
+          </button>
+        </div>
+        @if (isUploading()) {
+          <div class="dataset-uploading">
+            <mat-spinner diameter="22"></mat-spinner>
+            <span>Validating schema and appending rows...</span>
+          </div>
         }
+        <input
+          #fileInput
+          type="file"
+          multiple
+          hidden
+          [accept]="selectedFileType === 'CSV' ? '.csv' : '.xlsx'"
+          (change)="onFilesSelected($event)"
+        />
+        <input
+          #folderInput
+          type="file"
+          multiple
+          hidden
+          webkitdirectory
+          directory
+          (change)="onFolderSelected($event)"
+        />
+      </section>
+
+      <aside class="panel storage-panel">
+        <div class="panel-heading">
+          <h2>Import history</h2>
+          <span>{{ managedDataset.history.length }} events</span>
+        </div>
+        @if (managedDataset.history.length) {
+          <div class="import-history-list">
+            @for (entry of managedDataset.history; track entry.timestamp + entry.fileName) {
+              <div>
+                <span>{{ formatDate(entry.timestamp) }}</span>
+                <strong>{{ entry.fileName }}</strong>
+                <small>{{ formatNumber(entry.rowsAdded) }} rows - {{ entry.status }}</small>
+              </div>
+            }
+          </div>
+        } @else {
+          <div class="empty-project-state compact-empty-state">
+            <mat-icon>history</mat-icon>
+            <h2>No imports yet</h2>
+            <p>Upload a file to start the dataset history.</p>
+          </div>
+        }
+      </aside>
+    </div>
+
+    <section class="panel">
+      <div class="panel-heading">
+        <h2>Imported files</h2>
+        <span>Merged into one logical dataset</span>
       </div>
-      @for (row of previewRows; track row[0]) {
-        <div class="dataset-preview-row">
-          @for (cell of row; track $index) {
-            <span>{{ cell }}</span>
+      @if (managedDataset.files.length) {
+        <div class="imported-files-table dataset-management-table">
+          <div class="imported-file-row header">
+            <span>Filename</span>
+            <span>Rows</span>
+            <span>File Size</span>
+            <span>Import Timestamp</span>
+            <span>Status</span>
+            <span></span>
+          </div>
+          @for (file of managedDataset.files; track file.id) {
+            <div class="imported-file-row">
+              <span><mat-icon>description</mat-icon>{{ file.name }}</span>
+              <span>{{ formatNumber(file.rowCount) }}</span>
+              <span>{{ formatBytes(file.size) }}</span>
+              <span>{{ formatDate(file.importedAt) }}</span>
+              <span class="status-badge ok"><span></span>{{ file.status }}</span>
+              <span>
+                <button
+                  mat-button
+                  type="button"
+                  [disabled]="deletingFileId() === file.id"
+                  (click)="deleteFile(file)"
+                >
+                  @if (deletingFileId() === file.id) {
+                    <mat-spinner diameter="16"></mat-spinner>
+                  } @else {
+                    Delete
+                  }
+                </button>
+              </span>
+            </div>
           }
         </div>
-      }
-    </div>
-  </section>
-
-  <section class="panel">
-    <div class="panel-heading">
-      <h2>Imported files</h2>
-      <span>Merged into one logical dataset</span>
-    </div>
-    <div class="imported-files-table">
-      <div class="imported-file-row header">
-        <span>File Name</span>
-        <span>File Size</span>
-        <span>Status</span>
-      </div>
-      @for (file of importedFiles; track file.name) {
-        <div class="imported-file-row">
-          <span><mat-icon>description</mat-icon>{{ file.name }}</span>
-          <span>{{ file.size }}</span>
-          <span class="status-badge" [class]="file.tone"><span></span>{{ file.status }}</span>
+      } @else {
+        <div class="empty-project-state">
+          <mat-icon>upload_file</mat-icon>
+          <h2>No files available</h2>
+          <p>Upload CSV or XLSX files to build the dataset for this project.</p>
+          <button mat-flat-button type="button" (click)="openFilePicker()">Add Files</button>
         </div>
       }
-    </div>
-  </section>
+    </section>
+  }
 </section>

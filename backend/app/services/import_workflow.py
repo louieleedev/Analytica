@@ -37,6 +37,7 @@ async def build_import_preview(
     files: list[UploadFile],
     import_method: str,
     expected_file_type: str | None,
+    has_headers: bool = True,
 ) -> dict[str, Any]:
     selected_files = [file for file in files if file.filename]
     if not selected_files:
@@ -71,7 +72,7 @@ async def build_import_preview(
     _validate_file_types(import_method, expected_file_type, extensions)
 
     frames = [
-        _load_dataframe(file_payload["content"], file_payload["extension"], file_payload["name"])
+        _load_dataframe(file_payload["content"], file_payload["extension"], file_payload["name"], has_headers)
         for file_payload in file_payloads
     ]
     _validate_shared_schema(frames, [file_payload["name"] for file_payload in file_payloads])
@@ -96,6 +97,8 @@ async def build_import_preview(
         files=imported_files,
         schema=schema,
         dataset_size=dataset_size,
+        file_frames=frames,
+        has_headers=has_headers,
     )
     DATASET_REGISTRY[dataset_id] = StoredDataset(
         frame=dataset,
@@ -122,6 +125,7 @@ async def build_import_preview(
         "rowCount": int(len(dataset.index)),
         "columnCount": int(len(dataset.columns)),
         "datasetSize": dataset_size,
+        "hasHeaders": has_headers,
         "files": imported_files,
         "schema": schema,
         "preview": {
@@ -148,12 +152,12 @@ def _validate_file_types(import_method: str, expected_file_type: str | None, ext
         raise HTTPException(status_code=400, detail="Unsupported import method.")
 
 
-def _load_dataframe(content: bytes, extension: str, filename: str) -> pd.DataFrame:
+def _load_dataframe(content: bytes, extension: str, filename: str, has_headers: bool = True) -> pd.DataFrame:
     try:
         if extension == ".csv":
-            return _load_csv_dataframe(content, filename)
+            return _load_csv_dataframe(content, filename, has_headers)
         if extension == ".xlsx":
-            return _load_xlsx_dataframe(content, filename)
+            return _load_xlsx_dataframe(content, filename, has_headers)
     except Exception as exc:
         if isinstance(exc, HTTPException):
             raise
@@ -162,7 +166,7 @@ def _load_dataframe(content: bytes, extension: str, filename: str) -> pd.DataFra
     raise HTTPException(status_code=400, detail=f"Unsupported file type for {filename}.")
 
 
-def _load_csv_dataframe(content: bytes, filename: str) -> pd.DataFrame:
+def _load_csv_dataframe(content: bytes, filename: str, has_headers: bool = True) -> pd.DataFrame:
     text = _decode_csv(content)
     delimiter = _detect_delimiter(text, filename)
     rows = [_clean_row(row) for row in csv.reader(StringIO(text), delimiter=delimiter)]
@@ -171,12 +175,12 @@ def _load_csv_dataframe(content: bytes, filename: str) -> pd.DataFrame:
     if not rows:
         raise HTTPException(status_code=400, detail=f"{filename} does not contain a header row.")
 
-    header = rows[0]
-    column_count = len(header)
-    if column_count < 1 or not _has_any_value(header):
+    first_row = rows[0]
+    column_count = len(first_row)
+    if column_count < 1 or not _has_any_value(first_row):
         raise HTTPException(status_code=400, detail=f"{filename} does not contain a valid header row.")
 
-    data_rows = rows[1:]
+    data_rows = rows[1:] if has_headers else rows
     if not data_rows:
         raise HTTPException(status_code=400, detail=f"{filename} does not contain any data rows.")
 
@@ -195,17 +199,17 @@ def _load_csv_dataframe(content: bytes, filename: str) -> pd.DataFrame:
             ),
         )
 
-    columns = _make_column_names(header)
+    columns = _make_column_names(first_row) if has_headers else _generated_column_names(column_count)
     frame = pd.DataFrame(data_rows, columns=columns).replace("", pd.NA)
     _log_file_detection(filename, delimiter, len(frame.index), len(frame.columns), columns)
     return frame
 
 
-def _load_xlsx_dataframe(content: bytes, filename: str) -> pd.DataFrame:
+def _load_xlsx_dataframe(content: bytes, filename: str, has_headers: bool = True) -> pd.DataFrame:
     try:
         frame = pd.read_excel(
             BytesIO(content),
-            header=0,
+            header=0 if has_headers else None,
             dtype=str,
             keep_default_na=False,
             engine="calamine",
@@ -213,7 +217,7 @@ def _load_xlsx_dataframe(content: bytes, filename: str) -> pd.DataFrame:
     except Exception:
         frame = pd.read_excel(
             BytesIO(content),
-            header=0,
+            header=0 if has_headers else None,
             dtype=str,
             keep_default_na=False,
             engine="openpyxl",
@@ -224,7 +228,11 @@ def _load_xlsx_dataframe(content: bytes, filename: str) -> pd.DataFrame:
     if frame.empty:
         raise HTTPException(status_code=400, detail=f"{filename} does not contain any data rows.")
 
-    columns = _make_column_names([_clean_cell(column) for column in frame.columns])
+    columns = (
+        _make_column_names([_clean_cell(column) for column in frame.columns])
+        if has_headers
+        else _generated_column_names(len(frame.columns))
+    )
     frame = frame.map(_clean_cell)
     frame.columns = columns
     frame = frame.replace("", pd.NA)
@@ -254,7 +262,7 @@ def _detect_delimiter(text: str, filename: str) -> str:
             continue
 
         rows = [row for row in rows if _has_any_value(row)]
-        if len(rows) < 2:
+        if not rows:
             continue
 
         widths = [len(row) for row in rows]
@@ -352,6 +360,10 @@ def _make_column_names(header: list[str]) -> list[str]:
         columns.append(base_name if occurrence == 1 else f"{base_name}_{occurrence}")
 
     return columns
+
+
+def _generated_column_names(column_count: int) -> list[str]:
+    return [f"Column {index}" for index in range(1, column_count + 1)]
 
 
 def _clean_row(row: list[Any]) -> list[str]:

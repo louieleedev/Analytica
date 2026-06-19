@@ -21,6 +21,7 @@ export type ProjectDatasetMetadata = {
   columnCount: number;
   datasetType: string;
   datasetSize?: number;
+  hasHeaders?: boolean;
 };
 
 export type Project = {
@@ -49,6 +50,7 @@ export type ProjectDraft = {
   selectedFolderFiles: File[];
   selectedFolderPath: string;
   importPreview: ImportPreview | null;
+  hasHeaders: boolean;
 };
 
 type PersistedProject = {
@@ -60,6 +62,7 @@ type PersistedProject = {
   status: ProjectStatus;
   state: ProjectState;
   datasetMetadata?: ProjectDatasetMetadata | null;
+  hasHeaders?: boolean;
 };
 
 @Injectable({ providedIn: 'root' })
@@ -88,7 +91,13 @@ export class ProjectSelection {
       });
   }
 
-  createProject(projectName: string, description: string, importPreview?: ImportPreview): Observable<Project> {
+  createProject(
+    projectName: string,
+    description: string,
+    importPreview?: ImportPreview,
+    hasHeaders = true,
+    schemaColumns: string[] = [],
+  ): Observable<Project> {
     this.assertUniqueProjectName(projectName);
 
     return this.http
@@ -96,6 +105,8 @@ export class ProjectSelection {
         name: projectName,
         description,
         datasetId: importPreview?.datasetId ?? null,
+        hasHeaders,
+        schemaColumns,
       })
       .pipe(
         map((project) => this.mapPersistedProject(project, importPreview)),
@@ -127,6 +138,7 @@ export class ProjectSelection {
             columnCount: draft.importPreview.columnCount,
             datasetType: draft.importPreview.datasetType,
             datasetSize: draft.importPreview.datasetSize,
+            hasHeaders: draft.hasHeaders,
           }
         : undefined,
       schema: draft.importPreview?.schema,
@@ -156,6 +168,8 @@ export class ProjectSelection {
     projectName: string,
     description: string,
     importPreview: ImportPreview,
+    hasHeaders = true,
+    schemaColumns: string[] = [],
   ): Observable<Project> {
     this.assertUniqueProjectName(projectName, projectId);
 
@@ -164,6 +178,8 @@ export class ProjectSelection {
         name: projectName,
         description,
         datasetId: importPreview.datasetId,
+        hasHeaders,
+        schemaColumns,
       })
       .pipe(
         map((project) => this.mapPersistedProject(project, importPreview)),
@@ -249,6 +265,9 @@ export class ProjectSelection {
 
   private mapPersistedProject(project: PersistedProject, importPreview?: ImportPreview): Project {
     const datasetMetadata = project.datasetMetadata ?? undefined;
+    if (datasetMetadata && datasetMetadata.hasHeaders === undefined) {
+      datasetMetadata.hasHeaders = project.hasHeaders ?? true;
+    }
 
     return {
       id: project.id,

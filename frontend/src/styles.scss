@@ -717,6 +717,10 @@ table {
   gap: 16px;
 }
 
+.dataset-metric-grid {
+  grid-template-columns: repeat(6, minmax(0, 1fr));
+}
+
 .upload-zone {
   display: grid;
   min-height: 260px;
@@ -742,6 +746,39 @@ table {
   max-width: 460px;
   margin-bottom: 4px;
   color: #667085;
+}
+
+.dataset-file-type-switch,
+.dataset-uploading,
+.dataset-success {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.dataset-file-type-switch .selected {
+  border-color: #2f7df6;
+  background: #eaf3ff;
+  color: #1849a9;
+}
+
+.dataset-uploading {
+  color: #667085;
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.dataset-success {
+  padding: 12px 14px;
+  border: 1px solid #abefc6;
+  border-radius: 8px;
+  background: #ecfdf3;
+  color: #067647;
+  font-weight: 650;
+}
+
+.dataset-success mat-icon {
+  color: #12b76a;
 }
 
 .storage-body {
@@ -805,6 +842,24 @@ table {
   grid-template-columns: minmax(280px, 1fr) 160px 180px;
 }
 
+.dataset-management-table .imported-file-row {
+  grid-template-columns: minmax(260px, 1fr) 110px 130px 190px 160px 100px;
+}
+
+.dataset-management-table .imported-file-row > span:last-child {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+}
+
+.dataset-management-table .imported-file-row button {
+  min-width: auto;
+}
+
+.dataset-management-table .imported-file-row mat-spinner {
+  display: inline-block;
+}
+
 .dataset-preview-row:first-child,
 .imported-file-row:first-child {
   border-top: 0;
@@ -838,6 +893,42 @@ table {
   justify-self: start;
   margin: 10px 16px;
   padding: 0 10px;
+}
+
+.import-history-list {
+  display: grid;
+  max-height: 360px;
+  overflow: auto;
+}
+
+.import-history-list > div {
+  display: grid;
+  gap: 4px;
+  padding: 14px 18px;
+  border-top: 1px solid #eef3f8;
+}
+
+.import-history-list > div:first-child {
+  border-top: 0;
+}
+
+.import-history-list span,
+.import-history-list small {
+  color: #667085;
+  font-size: 12px;
+}
+
+.import-history-list strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #182230;
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.compact-empty-state {
+  padding: 28px 18px;
 }
 
 .file-list mat-icon,
@@ -2183,6 +2274,29 @@ table {
   width: 100%;
 }
 
+.schema-mode-options {
+  display: grid;
+  gap: 8px;
+  padding: 8px 0;
+}
+
+.schema-name-input {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid #d9e2ef;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #182230;
+  font: inherit;
+}
+
+.schema-name-input:focus {
+  border-color: #2f7df6;
+  outline: 0;
+  box-shadow: 0 0 0 3px rgba(47, 125, 246, 0.12);
+}
+
 .wizard-context {
   align-self: start;
   padding: 24px;
@@ -2475,6 +2589,10 @@ table {
   .pivot-builder-grid {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
+
+  .dataset-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
 }
 
 @media (max-width: 1366px) {
@@ -2527,6 +2645,10 @@ table {
     grid-template-columns: repeat(4, minmax(0, 1fr));
   }
 
+  .dataset-metric-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
   .project-grid {
     grid-template-columns: repeat(3, minmax(0, 1fr));
   }
@@ -2550,6 +2672,7 @@ table {
   }
 
   .metric-grid,
+  .dataset-metric-grid,
   .project-grid,
   .pivot-grid,
   .report-layout,

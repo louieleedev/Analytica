@@ -47,6 +47,18 @@
                 ></textarea>
               </mat-form-field>
             </label>
+
+            <div class="fixed-field">
+              <span>Schema Mode</span>
+              <mat-radio-group class="schema-mode-options" [value]="hasHeaders">
+                <mat-radio-button [value]="true" (click)="selectSchemaMode(true)">
+                  Files contain column headers
+                </mat-radio-button>
+                <mat-radio-button [value]="false" (click)="selectSchemaMode(false)">
+                  Files contain raw data only (no column headers)
+                </mat-radio-button>
+              </mat-radio-group>
+            </div>
           </div>
 
           <aside class="wizard-context">
@@ -211,7 +223,16 @@
               <h2>Detected columns</h2>
               <span>{{ importPreview?.columnCount ?? 0 }} columns</span>
             </div>
-            <p class="wizard-note">Schema information was detected from the selected files.</p>
+            <p class="wizard-note">
+              @if (hasHeaders) {
+                Schema information was detected from the selected file headers.
+              } @else {
+                Files do not contain headers. Review and name every generated column before import.
+              }
+            </p>
+            @if (schemaValidationMessage) {
+              <div class="field-error">{{ schemaValidationMessage }}</div>
+            }
 
             <div class="schema-preview-row schema-preview-header">
               <span>Column Name</span>
@@ -220,9 +241,20 @@
               <span>Nullability</span>
               <span>Example Value</span>
             </div>
-            @for (column of importPreview?.schema ?? []; track column.name) {
+            @for (column of importPreview?.schema ?? []; track $index) {
               <div class="schema-preview-row schema-preview-data-row">
-                <span>{{ column.name }}</span>
+                @if (hasHeaders) {
+                  <span>{{ column.name }}</span>
+                } @else {
+                  <span>
+                    <input
+                      class="schema-name-input"
+                      [ngModel]="column.name"
+                      (ngModelChange)="updateSchemaColumnName($index, $event)"
+                      placeholder="Column name"
+                    />
+                  </span>
+                }
                 <strong>{{ column.type }}</strong>
                 <span>{{ column.sourceFiles.length }} files</span>
                 <span>{{ column.nullable ? 'Nullable' : 'Required' }}</span>
@@ -262,7 +294,7 @@
 
         <div class="wizard-actions">
           <button mat-button type="button" (click)="previousStep()">Back</button>
-          <button mat-flat-button type="button" [disabled]="!importPreview" (click)="goToStep(3)">
+          <button mat-flat-button type="button" [disabled]="!isSchemaValid()" (click)="goToStep(3)">
             Continue
           </button>
         </div>
@@ -305,7 +337,7 @@
           <button
             mat-flat-button
             type="button"
-            [disabled]="!isProjectInfoValid(projectName, description) || !importPreview"
+            [disabled]="!isProjectInfoValid(projectName, description) || !isSchemaValid()"
             (click)="createProject()"
           >
             Create Project

@@ -26,6 +26,7 @@ export type DatasetPreview = {
 export type ImportPreview = {
   datasetId: string;
   datasetType: DatasetFileType;
+  hasHeaders: boolean;
   fileCount: number;
   rowCount: number;
   columnCount: number;
@@ -33,6 +34,37 @@ export type ImportPreview = {
   files: ImportedFileInfo[];
   schema: DetectedSchemaColumn[];
   preview: DatasetPreview;
+};
+
+export type DatasetManagedFile = {
+  id: string;
+  name: string;
+  size: number;
+  rowCount: number;
+  importedAt: string | null;
+  status: string;
+};
+
+export type DatasetManagementSummary = {
+  datasetId: string;
+  datasetType: DatasetFileType;
+  hasHeaders: boolean;
+  summary: {
+    totalFiles: number;
+    totalRows: number;
+    totalColumns: number;
+    datasetSize: number;
+    lastImportTimestamp: string | null;
+    lastImportedFile: string | null;
+  };
+  files: DatasetManagedFile[];
+  history: {
+    timestamp: string | null;
+    fileName: string;
+    rowsAdded: number;
+    status: string;
+  }[];
+  columns: DetectedSchemaColumn[];
 };
 
 export type OverviewColumn = {
@@ -51,6 +83,7 @@ export type DatasetOverview = {
     totalColumns: number;
     importedFiles: number;
     datasetSize: number;
+    hasHeaders: boolean;
   };
   columns: OverviewColumn[];
 };
