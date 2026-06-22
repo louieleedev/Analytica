@@ -157,7 +157,6 @@ def _execute_column_pivot(
     column_field_names = [str(field["name"]) for field in column_fields]
     row_field_names = [str(field["name"]) for field in row_fields]
     where_sql, parameters = _build_where_clause(storage_info, filters)
-    column_values = _query_distinct_column_values(storage_info, column_field_names, where_sql, parameters)
 
     value_headers: list[str] = []
     metric_select_parts: list[str] = []
@@ -171,6 +170,14 @@ def _execute_column_pivot(
         metric_select_parts.append(
             f"{_aggregation_expression(metric_column, category, aggregation)} AS {quote_identifier(metric_header)}"
         )
+
+    column_values = _query_distinct_column_values(
+        storage_info,
+        column_field_names,
+        value_fields,
+        where_sql,
+        parameters,
+    )
 
     select_parts = [
         *[quote_identifier(field_name) for field_name in row_field_names],
@@ -325,13 +332,14 @@ def _build_query(
 def _query_distinct_column_values(
     storage_info: dict[str, Any],
     column_names: list[str],
+    value_fields: list[dict[str, Any]],
     where_sql: str,
     parameters: list[Any],
 ) -> list[tuple[Any, ...]]:
     quoted_columns = [quote_identifier(column_name) for column_name in column_names]
     selected_columns = ", ".join(quoted_columns)
-    null_condition = " AND ".join(f"{quoted_column} IS NOT NULL" for quoted_column in quoted_columns)
-    distinct_where_sql = f"{where_sql} AND {null_condition}" if where_sql else f"WHERE {null_condition}"
+    value_presence_sql = _value_presence_condition(value_fields)
+    distinct_where_sql = _append_where_condition(where_sql, value_presence_sql)
     for connection in get_connection():
         rows = connection.execute(
             f"""
@@ -348,6 +356,25 @@ def _query_distinct_column_values(
     return []
 
 
+def _value_presence_condition(value_fields: list[dict[str, Any]]) -> str:
+    conditions = []
+    for value_field in value_fields:
+        column_name = str(value_field["name"])
+        category = str(value_field.get("category") or "")
+        expression = _numeric_expression(column_name) if category == "AMOUNT" else quote_identifier(column_name)
+        conditions.append(f"{expression} IS NOT NULL")
+
+    return " OR ".join(f"({condition})" for condition in conditions)
+
+
+def _append_where_condition(where_sql: str, condition_sql: str) -> str:
+    if not condition_sql:
+        return where_sql
+    if where_sql:
+        return f"{where_sql} AND ({condition_sql})"
+    return f"WHERE ({condition_sql})"
+
+
 def _estimate_field_cardinalities(
     storage_info: dict[str, Any],
     column_names: list[str],
@@ -362,7 +389,9 @@ def _estimate_field_cardinalities(
         for connection in get_connection():
             row = connection.execute(
                 f"""
-                SELECT COUNT(DISTINCT {quoted_column})
+                SELECT
+                    COUNT(DISTINCT {quoted_column})
+                    + CASE WHEN COUNT(*) FILTER (WHERE {quoted_column} IS NULL) > 0 THEN 1 ELSE 0 END
                 FROM {table_name}
                 {where_sql}
                 """,
@@ -563,7 +592,15 @@ def _metric_label(value_header: str) -> str:
 
 
 def _column_tuple_label(column_value: tuple[Any, ...]) -> str:
-    return " ".join(str(_serialise_value(value)) for value in column_value)
+    return " ".join(_column_value_label(value) for value in column_value)
+
+
+def _column_value_label(value: Any) -> str:
+    serialised_value = _serialise_value(value)
+    if serialised_value is None:
+        return "(Blank)"
+    text = str(serialised_value).strip()
+    return text if text else "(Blank)"
 
 
 def _total_header_label(metric_label: str, multiple_values: bool) -> str:
