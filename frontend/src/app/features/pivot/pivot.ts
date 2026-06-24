@@ -17,6 +17,7 @@ import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
 
 import { ImportApi } from '../../core/import-api';
 import {
+  ApplicationSettings,
   DetectedColumnType,
   ExplorerColumnCategory,
   ExplorerFilterMetadata,
@@ -26,7 +27,8 @@ import {
   PivotResult,
   TopValue,
 } from '../../core/import-workflow.models';
-import { ProjectSelection } from '../../core/project-selection';
+import { ApplicationSettingsStore } from '../../core/application-settings-store';
+import { ProjectDatasetMetadata, ProjectSelection } from '../../core/project-selection';
 import { ColumnCategoryDialog } from '../explorer/explorer';
 
 type PivotFieldType = 'text' | 'number' | 'date' | 'boolean';
@@ -81,14 +83,37 @@ type PivotRenderMetrics = {
 
 type PivotRenderingMode = 'Hierarchical' | 'Compact' | 'Too Large';
 
+type PivotRenderPlan = {
+  result: PivotResult;
+  rows: (string | number | boolean | null)[][];
+  rowWarning: string | null;
+  columnWarning: string | null;
+  fullDataRows: number;
+  displayedDataRows: number;
+  fullColumns: number;
+  displayedColumns: number;
+};
+
 type IdentifierOperator = 'Equals' | 'Contains' | 'Starts With';
+
+type PersistedPivotMetadata = {
+  rowCount: number;
+  columnCount: number;
+};
 
 type PersistedPivotState = {
   config: Record<PivotZoneKey, PivotField[]>;
-  pivotResult: PivotResult | null;
+  pivotResult?: PivotResult | null;
+  pivotMetadata?: PersistedPivotMetadata | null;
   pivotWarnings: string[];
   hasPendingChanges: boolean;
+  staleReason?: PivotStaleReason;
+  appliedConfigFingerprint?: string | null;
+  datasetSignature?: string | null;
+  lastCalculatedAt?: string | null;
 };
+
+type PivotStaleReason = 'config' | 'dataset' | null;
 
 @Injectable({ providedIn: 'root' })
 class PivotTemplateStore {
@@ -104,12 +129,20 @@ class PivotTemplateStore {
 
   saveTemplate(template: PivotTemplate): void {
     const templates = [...this.getTemplates(), template].slice(0, 4);
-    localStorage.setItem(this.storageKey, JSON.stringify(templates));
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(templates));
+    } catch (error) {
+      console.warn('Pivot persistence failed.', error);
+    }
   }
 
   deleteTemplate(templateId: string): void {
     const templates = this.getTemplates().filter((template) => template.id !== templateId);
-    localStorage.setItem(this.storageKey, JSON.stringify(templates));
+    try {
+      localStorage.setItem(this.storageKey, JSON.stringify(templates));
+    } catch (error) {
+      console.warn('Pivot persistence failed.', error);
+    }
   }
 }
 
@@ -459,6 +492,7 @@ export class PivotTemplatesDialog {
 })
 export class Pivot {
   private readonly importApi = inject(ImportApi);
+  private readonly applicationSettingsStore = inject(ApplicationSettingsStore);
   private readonly projectSelection = inject(ProjectSelection);
   private readonly dialog = inject(MatDialog);
   private readonly snackBar = inject(MatSnackBar);
@@ -466,13 +500,19 @@ export class Pivot {
   private readonly categoryStoragePrefix = 'analytica:explorer-column-categories';
   private readonly pivotStateStoragePrefix = 'analytica:pivot-state';
   private loadedDatasetId: string | null = null;
+  private loadedDatasetSignature: string | null = null;
+  private appliedConfigFingerprint: string | null = null;
+  private appliedDatasetSignature: string | null = null;
 
   protected readonly maxTemplates = 4;
   protected templates: PivotTemplate[] = this.templateStore.getTemplates();
   protected isProcessing = false;
+  protected isExporting = false;
   protected isLoadingFields = false;
   protected fieldErrorMessage = '';
   protected hasPendingChanges = false;
+  protected pivotStaleReason: PivotStaleReason = null;
+  protected lastCalculatedAt: string | null = null;
   protected valuesHelperMessage = '';
   protected pivotWarnings: string[] = [];
   protected filterHelperMessage = '';
@@ -518,7 +558,8 @@ export class Pivot {
   private readonly hardColumnCombinationThreshold = 5_000;
   private readonly pivotColumnWarningThreshold = 200;
   private readonly pivotColumnHardThreshold = 2_000;
-  private readonly renderCellThreshold = 200_000;
+  private readonly maxRenderColumns = 100;
+  private readonly renderCellThreshold = 50_000;
   private _pivotResult: PivotResult | null = null;
   protected cachedPivotHeaderCells: PivotHeaderCell[] = [];
   protected cachedPivotHeaderDepth = 1;
@@ -543,12 +584,15 @@ export class Pivot {
 
   constructor() {
     effect(() => {
-      const datasetId = this.projectSelection.activeProject()?.datasetMetadata?.datasetId ?? null;
-      if (datasetId === this.loadedDatasetId) {
+      const activeProject = this.projectSelection.activeProject();
+      const datasetId = activeProject?.datasetMetadata?.datasetId ?? null;
+      const datasetSignature = this.createDatasetSignature(activeProject?.datasetMetadata);
+      if (datasetId === this.loadedDatasetId && datasetSignature === this.loadedDatasetSignature) {
         return;
       }
 
       this.loadedDatasetId = datasetId;
+      this.loadedDatasetSignature = datasetSignature;
       this.loadDatasetFields();
     });
   }
@@ -562,6 +606,18 @@ export class Pivot {
       this.getZone('values').fields.length > 0 &&
       this.getZone('rows').fields.length > 0
     );
+  }
+
+  protected get canExportPivot(): boolean {
+    return !!this.pivotResult && !this.hasPendingChanges;
+  }
+
+  protected get pivotStaleMessage(): string {
+    if (this.pivotStaleReason === 'dataset') {
+      return 'Dataset has changed. Apply Pivot to refresh results.';
+    }
+
+    return 'Pivot configuration changed. Apply Pivot to refresh results.';
   }
 
   protected get pivotValidationMessage(): string {
@@ -910,20 +966,22 @@ export class Pivot {
       return;
     }
 
-    const columns = result.headers.length;
-    const columnCombinations = result.pivot?.columnValues?.length ?? 0;
-    this.displayedPivotRows = this.buildDisplayPivotRows(result);
+    const renderPlan = this.createPivotRenderPlan(result);
+    const renderResult = renderPlan.result;
+    const columns = renderPlan.displayedColumns;
+    const columnCombinations = renderResult.pivot?.columnValues?.length ?? 0;
+    this.displayedPivotRows = renderPlan.rows;
     const displayedRows = this.displayedPivotRows.length;
-    const dataRows = this.displayedPivotRows.filter((row) => !this.isTotalPivotRow(row)).length;
-    const dataColumns = this.countDataPivotColumns(result);
+    const dataRows = renderPlan.displayedDataRows;
+    const dataColumns = this.countDataPivotColumns(renderResult);
     const cells = displayedRows * columns;
     const mode = this.selectPivotRenderingMode(columnCombinations, cells);
 
     this.cachedPivotHeaderCells =
       mode === 'Hierarchical'
-        ? this.buildHierarchicalHeaderCells(result)
+        ? this.buildHierarchicalHeaderCells(renderResult)
         : mode === 'Compact'
-          ? this.buildCompactHeaderCells(result)
+          ? this.buildCompactHeaderCells(renderResult)
           : [];
     this.cachedPivotHeaderDepth =
       this.cachedPivotHeaderCells.length === 0
@@ -936,7 +994,108 @@ export class Pivot {
       columnCombinations,
       mode,
     };
-    this.pivotGridTemplateColumns = `repeat(${Math.max(result.headers.length, 1)}, minmax(140px, 1fr))`;
+    this.pivotGridTemplateColumns = `repeat(${Math.max(renderResult.headers.length, 1)}, minmax(140px, 1fr))`;
+    this.pivotWarnings = [
+      ...this.pivotWarnings.filter((warning) => !this.isRenderLimitWarning(warning)),
+      ...[renderPlan.rowWarning, renderPlan.columnWarning].filter((warning): warning is string => !!warning),
+    ];
+  }
+
+  private createPivotRenderPlan(result: PivotResult): PivotRenderPlan {
+    const columnLimitedResult = this.applyPivotColumnRenderLimit(result);
+    const displayRowsBeforeLimit = this.buildDisplayPivotRows(columnLimitedResult);
+    const fullDataRows = result.rows.filter((row) => !this.isTotalPivotRow(row)).length;
+    const rowLimitedRows = this.applyPivotRowRenderLimit(displayRowsBeforeLimit);
+    const displayedDataRows = rowLimitedRows.filter((row) => !this.isTotalPivotRow(row)).length;
+    const rowWarning =
+      fullDataRows > displayedDataRows
+        ? `Showing first ${this.formatMetricValue(displayedDataRows)} of ${this.formatMetricValue(fullDataRows)} rows.`
+        : null;
+    const fullColumns = result.headers.length;
+    const displayedColumns = columnLimitedResult.headers.length;
+    const columnWarning =
+      fullColumns > displayedColumns
+        ? [
+            'This Pivot may become difficult to read.',
+            `Estimated columns: ${this.formatMetricValue(fullColumns)}.`,
+            `Showing first ${this.formatMetricValue(displayedColumns)} columns.`,
+          ].join(' ')
+        : null;
+
+    return {
+      result: {
+        ...columnLimitedResult,
+        rows: rowLimitedRows,
+        rowCount: rowLimitedRows.length,
+      },
+      rows: rowLimitedRows,
+      rowWarning,
+      columnWarning,
+      fullDataRows,
+      displayedDataRows,
+      fullColumns,
+      displayedColumns,
+    };
+  }
+
+  private applyPivotColumnRenderLimit(result: PivotResult): PivotResult {
+    if (result.headers.length <= this.maxRenderColumns) {
+      return result;
+    }
+
+    const metadata = result.pivot;
+    if (!metadata?.columnFields.length || !metadata.columnValues.length) {
+      return {
+        ...result,
+        headers: result.headers.slice(0, this.maxRenderColumns),
+        rows: result.rows.map((row) => row.slice(0, this.maxRenderColumns)),
+      };
+    }
+
+    const rowFieldCount = metadata.rowFields.length;
+    const valueHeaders = metadata.valueFields.length > 0 ? metadata.valueFields : ['Value'];
+    const valueCount = valueHeaders.length;
+    const availableValueColumns = Math.max(0, this.maxRenderColumns - rowFieldCount);
+    const visibleCombinationCount = Math.max(0, Math.floor(availableValueColumns / valueCount));
+    const visibleColumnValues = metadata.columnValues.slice(0, visibleCombinationCount);
+    const visibleDataColumnCount = visibleColumnValues.length * valueCount;
+    const visibleColumnCount = Math.max(rowFieldCount, rowFieldCount + visibleDataColumnCount);
+
+    return {
+      ...result,
+      headers: result.headers.slice(0, visibleColumnCount),
+      rows: result.rows.map((row) => row.slice(0, visibleColumnCount)),
+      pivot: {
+        ...metadata,
+        columnValues: visibleColumnValues,
+      },
+    };
+  }
+
+  private applyPivotRowRenderLimit(
+    rows: (string | number | boolean | null)[][],
+  ): (string | number | boolean | null)[][] {
+    const maxRows = this.pivotMaxRenderRows();
+    const dataRows = rows.filter((row) => !this.isTotalPivotRow(row));
+    const summaryRows = rows.filter((row) => this.isTotalPivotRow(row));
+    if (dataRows.length <= maxRows) {
+      return rows;
+    }
+
+    return [...dataRows.slice(0, maxRows), ...summaryRows];
+  }
+
+  private pivotMaxRenderRows(): number {
+    const settings: ApplicationSettings = this.applicationSettingsStore.settings();
+    const value = Number(settings.pivot_max_rows);
+    return Number.isFinite(value) ? Math.min(300, Math.max(10, value)) : 100;
+  }
+
+  private isRenderLimitWarning(warning: string): boolean {
+    return (
+      warning.startsWith('Showing first ') ||
+      warning.startsWith('This Pivot may become difficult to read. Estimated columns:')
+    );
   }
 
   private buildDisplayPivotRows(result: PivotResult): (string | number | boolean | null)[][] {
@@ -1234,6 +1393,8 @@ export class Pivot {
     this.pivotResult = null;
     this.pivotWarnings = [];
     this.hasPendingChanges = false;
+    this.appliedConfigFingerprint = null;
+    this.appliedDatasetSignature = null;
     this.valuesHelperMessage = '';
     this.filterHelperMessage = '';
     this.clearPivotState();
@@ -1273,6 +1434,40 @@ export class Pivot {
     });
   }
 
+  protected exportPivot(): void {
+    const activeProject = this.projectSelection.activeProject();
+    const datasetId = activeProject?.datasetMetadata?.datasetId;
+    if (this.isProcessing || this.isExporting || !datasetId || !this.canExportPivot) {
+      return;
+    }
+
+    this.isExporting = true;
+    this.valuesHelperMessage = '';
+    const request = this.createPivotRequest();
+    this.importApi
+      .exportPivot({
+        ...request,
+        datasetId,
+        projectName: activeProject.name,
+      })
+      .subscribe({
+        next: (response) => {
+          this.isExporting = false;
+          const blob = response.body;
+          if (!blob) {
+            this.valuesHelperMessage = 'Pivot export did not return a file.';
+            return;
+          }
+
+          this.downloadBlob(blob, this.getExportFilename(response.headers.get('content-disposition'), activeProject.name));
+        },
+        error: (error) => {
+          this.isExporting = false;
+          this.valuesHelperMessage = error?.error?.detail ?? 'Pivot export could not be created.';
+        },
+      });
+  }
+
   private executePivotRequest(datasetId: string, request: PivotRequest): void {
     const dialogRef = this.dialog.open(PivotProcessingDialog, {
       disableClose: true,
@@ -1281,12 +1476,16 @@ export class Pivot {
 
     this.importApi.executePivot(datasetId, request).subscribe({
       next: (result) => {
-        this.pivotResult = result;
-        this.pivotWarnings = [...this.pivotWarnings, ...result.warnings];
-        this.hasPendingChanges = false;
         this.isProcessing = false;
-        this.savePivotState();
         dialogRef.close();
+        this.pivotWarnings = [...this.pivotWarnings, ...result.warnings];
+        this.pivotResult = result;
+        this.appliedConfigFingerprint = this.createPivotConfigFingerprint();
+        this.appliedDatasetSignature = this.createDatasetSignature();
+        this.hasPendingChanges = false;
+        this.pivotStaleReason = null;
+        this.lastCalculatedAt = new Date().toISOString();
+        this.savePivotState();
       },
       error: () => {
         this.isProcessing = false;
@@ -1294,6 +1493,48 @@ export class Pivot {
         this.valuesHelperMessage = 'Pivot could not be calculated.';
       },
     });
+  }
+
+  private downloadBlob(blob: Blob, filename: string): void {
+    const url = window.URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = filename;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    window.URL.revokeObjectURL(url);
+  }
+
+  private getExportFilename(contentDisposition: string | null, projectName: string): string {
+    if (!contentDisposition) {
+      return this.buildFallbackExportFilename(projectName);
+    }
+
+    const encodedFilename = contentDisposition.match(/filename\\*=UTF-8''([^;]+)/)?.[1];
+    if (encodedFilename) {
+      return decodeURIComponent(encodedFilename);
+    }
+
+    return (
+      contentDisposition.match(/filename=([^;]+)/)?.[1]?.replaceAll('"', '').trim() ||
+      this.buildFallbackExportFilename(projectName)
+    );
+  }
+
+  private buildFallbackExportFilename(projectName: string): string {
+    const safeProjectName = projectName.replace(/[^A-Za-z0-9_-]+/g, '_').replace(/^_+|_+$/g, '') || 'Project';
+    const now = new Date();
+    const timestamp = [
+      now.getFullYear(),
+      String(now.getMonth() + 1).padStart(2, '0'),
+      String(now.getDate()).padStart(2, '0'),
+      '_',
+      String(now.getHours()).padStart(2, '0'),
+      String(now.getMinutes()).padStart(2, '0'),
+      String(now.getSeconds()).padStart(2, '0'),
+    ].join('');
+    return `pivot_${safeProjectName}_${timestamp}.xlsx`;
   }
 
   protected openSaveTemplateDialog(): void {
@@ -1369,6 +1610,41 @@ export class Pivot {
     };
   }
 
+  private createPivotConfigFingerprint(): string {
+    return this.stableStringify(this.createPivotRequest());
+  }
+
+  private createDatasetSignature(metadata?: ProjectDatasetMetadata): string | null {
+    const datasetMetadata = metadata ?? this.projectSelection.activeProject()?.datasetMetadata;
+    if (!datasetMetadata?.datasetId) {
+      return null;
+    }
+
+    return this.stableStringify({
+      datasetId: datasetMetadata.datasetId,
+      fileCount: datasetMetadata.fileCount,
+      rowCount: datasetMetadata.rowCount,
+      columnCount: datasetMetadata.columnCount,
+      datasetSize: datasetMetadata.datasetSize ?? 0,
+    });
+  }
+
+  private stableStringify(value: unknown): string {
+    if (Array.isArray(value)) {
+      return `[${value.map((item) => this.stableStringify(item)).join(',')}]`;
+    }
+
+    if (value && typeof value === 'object') {
+      const record = value as Record<string, unknown>;
+      return `{${Object.keys(record)
+        .sort()
+        .map((key) => `${JSON.stringify(key)}:${this.stableStringify(record[key])}`)
+        .join(',')}}`;
+    }
+
+    return JSON.stringify(value);
+  }
+
   private toPivotFieldRequest(field: PivotField) {
     return {
       name: field.name,
@@ -1422,6 +1698,7 @@ export class Pivot {
 
   private markPending(): void {
     this.hasPendingChanges = true;
+    this.pivotStaleReason = 'config';
     this.savePivotState();
   }
 
@@ -1846,7 +2123,11 @@ export class Pivot {
         .filter((field): field is PivotField & { category: ExplorerColumnCategory } => field.category !== null)
         .map((field) => [field.name, field.category]),
     );
-    localStorage.setItem(`${this.categoryStoragePrefix}:${activeProject.id}`, JSON.stringify(categories));
+    try {
+      localStorage.setItem(`${this.categoryStoragePrefix}:${activeProject.id}`, JSON.stringify(categories));
+    } catch (error) {
+      console.warn('Pivot persistence failed.', error);
+    }
   }
 
   private resetPivotConfiguration(): void {
@@ -1859,6 +2140,10 @@ export class Pivot {
     this.pivotResult = null;
     this.pivotWarnings = [];
     this.hasPendingChanges = false;
+    this.pivotStaleReason = null;
+    this.appliedConfigFingerprint = null;
+    this.appliedDatasetSignature = null;
+    this.lastCalculatedAt = null;
     this.valuesHelperMessage = '';
     this.filterHelperMessage = '';
   }
@@ -1875,11 +2160,40 @@ export class Pivot {
     }
     this.availableFields = this.cloneFields(this.allFields);
     this.sortAvailableFields();
-    this.pivotResult = state.pivotResult;
     this.pivotWarnings = state.pivotWarnings ?? [];
-    this.hasPendingChanges = state.hasPendingChanges;
+    this.pivotResult = null;
+    const currentConfigFingerprint = this.createPivotConfigFingerprint();
+    const currentDatasetSignature = this.createDatasetSignature();
+    this.appliedConfigFingerprint = state.appliedConfigFingerprint ?? null;
+    this.appliedDatasetSignature = state.datasetSignature ?? null;
+    const datasetChanged =
+      !!this.appliedConfigFingerprint &&
+      !!this.appliedDatasetSignature &&
+      this.appliedDatasetSignature !== currentDatasetSignature;
+    const configChanged =
+      !!this.appliedConfigFingerprint &&
+      this.appliedConfigFingerprint !== currentConfigFingerprint;
+    const hasAppliedSnapshot = !!this.appliedConfigFingerprint;
+    const legacyPendingState = !hasAppliedSnapshot && Boolean(state.hasPendingChanges);
+
+    this.hasPendingChanges = Boolean(datasetChanged || configChanged || legacyPendingState);
+    this.pivotStaleReason = datasetChanged
+      ? 'dataset'
+      : configChanged || legacyPendingState
+        ? 'config'
+        : null;
+    this.lastCalculatedAt = state.lastCalculatedAt ?? null;
     this.valuesHelperMessage = '';
     this.filterHelperMessage = '';
+    if (
+      hasAppliedSnapshot &&
+      !this.hasPendingChanges &&
+      !this.pivotResult &&
+      this.canApplyPivot &&
+      !this.isProcessing
+    ) {
+      queueMicrotask(() => this.applyPivot());
+    }
   }
 
   private loadPivotState(projectId: string): PersistedPivotState | null {
@@ -1898,11 +2212,21 @@ export class Pivot {
 
     const state: PersistedPivotState = {
       config: this.createTemplateConfig(),
-      pivotResult: this.pivotResult,
+      pivotMetadata: this.pivotResult
+        ? { rowCount: this.pivotResult.rowCount, columnCount: this.pivotResult.headers.length }
+        : null,
       pivotWarnings: this.pivotWarnings,
       hasPendingChanges: this.hasPendingChanges,
+      staleReason: this.pivotStaleReason,
+      appliedConfigFingerprint: this.appliedConfigFingerprint,
+      datasetSignature: this.appliedDatasetSignature,
+      lastCalculatedAt: this.lastCalculatedAt,
     };
-    localStorage.setItem(this.getPivotStateStorageKey(projectId), JSON.stringify(state));
+    try {
+      localStorage.setItem(this.getPivotStateStorageKey(projectId), JSON.stringify(state));
+    } catch (error) {
+      console.warn('Pivot persistence failed.', error);
+    }
   }
 
   private clearPivotState(): void {

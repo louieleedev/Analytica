@@ -106,6 +106,13 @@ export class ImportApi {
     return this.http.post<PivotResult>(`${this.apiBaseUrl}/datasets/${datasetId}/pivot`, payload);
   }
 
+  exportPivot(payload: PivotRequest & { datasetId: string; projectName: string }) {
+    return this.http.post(`${this.apiBaseUrl}/pivot/export`, payload, {
+      observe: 'response',
+      responseType: 'blob',
+    });
+  }
+
   estimatePivot(datasetId: string, payload: PivotRequest) {
     return this.http.post<PivotEstimate>(`${this.apiBaseUrl}/datasets/${datasetId}/pivot/estimate`, payload);
   }

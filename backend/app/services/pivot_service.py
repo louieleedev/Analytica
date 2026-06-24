@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+from io import BytesIO
 import logging
+import re
 from typing import Any
 
 from fastapi import HTTPException
+from openpyxl import Workbook
+from openpyxl.utils import get_column_letter
+from openpyxl.styles import Font, PatternFill
 
 from app.db.duckdb import get_connection
-from app.services.application_settings import get_application_settings
 from app.services.dataset_profile import _numeric_expression
 from app.services.dataset_storage import get_dataset_storage_info, quote_identifier
 from app.services.explorer_profile import _build_where_clause
@@ -17,7 +21,10 @@ logger = logging.getLogger(__name__)
 AMOUNT_AGGREGATIONS = {"Sum", "Average", "Median", "Min", "Max", "Count", "Distinct Count"}
 DISCRETE_AGGREGATIONS = {"Count", "Distinct Count"}
 RESULT_LIMIT = 10_000
-DEFAULT_PIVOT_MAX_ROWS = 100
+EXCEL_MAX_ROWS = 1_048_576
+EXCEL_MAX_COLUMNS = 16_384
+HEADER_FILL = "E5E7EB"
+TOTAL_FILL = "E5E7EB"
 
 
 def estimate_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
@@ -75,6 +82,32 @@ def estimate_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
 
 
 def execute_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
+    return _execute_pivot(dataset_id, payload)
+
+
+def build_pivot_export(payload: dict[str, Any]) -> tuple[bytes, str]:
+    dataset_id = str(payload.get("datasetId") or "").strip()
+    if not dataset_id:
+        raise HTTPException(status_code=400, detail="datasetId is required.")
+
+    project_name = str(payload.get("projectName") or "Project").strip() or "Project"
+    pivot_payload = {
+        "rows": payload.get("rows", []),
+        "columns": payload.get("columns", []),
+        "values": payload.get("values", []),
+        "filters": payload.get("filters", []),
+    }
+    pivot_result = _execute_pivot(dataset_id, pivot_payload)
+    _validate_excel_limits(pivot_result)
+
+    workbook = _build_pivot_workbook(pivot_result)
+    stream = BytesIO()
+    workbook.save(stream)
+    stream.seek(0)
+    return stream.getvalue(), _build_export_filename(project_name)
+
+
+def _execute_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
     storage_info = get_dataset_storage_info(dataset_id)
     if storage_info is None:
         raise HTTPException(status_code=404, detail=f"Dataset {dataset_id} was not found.")
@@ -114,7 +147,7 @@ def execute_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
         select_parts.append(f"{_aggregation_expression(column_name, category, aggregation)} AS {quote_identifier(header)}")
 
     where_sql, parameters = _build_where_clause(storage_info, filters)
-    query = _build_query(storage_info, select_parts, group_by_parts, where_sql)
+    query = _build_query(storage_info, select_parts, group_by_parts, where_sql, limit=None)
 
     logger.info(
         "Pivot query generated: dataset_id=%s rows=%s values=%s sql=%s",
@@ -129,19 +162,12 @@ def execute_pivot(dataset_id: str, payload: dict[str, Any]) -> dict[str, Any]:
 
     headers = [field["name"] for field in row_fields] + value_headers
     rows = [[_serialise_value(value) for value in row] for row in result]
-    warnings = []
-    if len(rows) >= RESULT_LIMIT:
-        warnings.append(f"Pivot result is limited to the first {RESULT_LIMIT:,} rows.")
-    rows, row_limit_warning = _apply_pivot_row_limit(rows)
-    if row_limit_warning:
-        warnings.append(row_limit_warning)
-
     return {
         "datasetId": dataset_id,
         "headers": headers,
         "rows": rows,
         "rowCount": len(rows),
-        "warnings": warnings,
+        "warnings": [],
         "sql": query,
     }
 
@@ -177,6 +203,7 @@ def _execute_column_pivot(
         value_fields,
         where_sql,
         parameters,
+        limit=None,
     )
 
     select_parts = [
@@ -188,7 +215,7 @@ def _execute_column_pivot(
         *[quote_identifier(field_name) for field_name in row_field_names],
         *[quote_identifier(field_name) for field_name in column_field_names],
     ]
-    query = _build_query(storage_info, select_parts, group_by_parts, where_sql)
+    query = _build_query(storage_info, select_parts, group_by_parts, where_sql, limit=None)
 
     logger.info(
         "Column pivot query generated: dataset_id=%s rows=%s columns=%s values=%s sql=%s",
@@ -223,19 +250,12 @@ def _execute_column_pivot(
     )
     if total_row:
         rows.append(total_row)
-    warnings = []
-    if len(rows) >= RESULT_LIMIT:
-        warnings.append(f"Pivot result is limited to the first {RESULT_LIMIT:,} rows.")
-    rows, row_limit_warning = _apply_pivot_row_limit(rows)
-    if row_limit_warning:
-        warnings.append(row_limit_warning)
-
     return {
         "datasetId": dataset_id,
         "headers": headers,
         "rows": rows,
         "rowCount": len(rows),
-        "warnings": warnings,
+        "warnings": [],
         "sql": query,
         "pivot": {
             "rowFields": row_field_names,
@@ -315,9 +335,11 @@ def _build_query(
     select_parts: list[str],
     group_by_parts: list[str],
     where_sql: str,
+    limit: int | None = RESULT_LIMIT,
 ) -> str:
     group_by_sql = f"GROUP BY {', '.join(group_by_parts)}" if group_by_parts else ""
     order_by_sql = f"ORDER BY {', '.join(group_by_parts)}" if group_by_parts else ""
+    limit_sql = f"LIMIT {limit}" if limit is not None else ""
 
     return f"""
         SELECT {', '.join(select_parts)}
@@ -325,7 +347,7 @@ def _build_query(
         {where_sql}
         {group_by_sql}
         {order_by_sql}
-        LIMIT {RESULT_LIMIT}
+        {limit_sql}
     """
 
 
@@ -335,11 +357,14 @@ def _query_distinct_column_values(
     value_fields: list[dict[str, Any]],
     where_sql: str,
     parameters: list[Any],
+    limit: int | None = RESULT_LIMIT,
 ) -> list[tuple[Any, ...]]:
     quoted_columns = [quote_identifier(column_name) for column_name in column_names]
     selected_columns = ", ".join(quoted_columns)
     value_presence_sql = _value_presence_condition(value_fields)
     distinct_where_sql = _append_where_condition(where_sql, value_presence_sql)
+    limit_sql = "LIMIT ?" if limit is not None else ""
+    query_parameters = [*parameters, limit] if limit is not None else parameters
     for connection in get_connection():
         rows = connection.execute(
             f"""
@@ -347,9 +372,9 @@ def _query_distinct_column_values(
             FROM {quote_identifier(str(storage_info["tableName"]))}
             {distinct_where_sql}
             ORDER BY {selected_columns}
-            LIMIT ?
+            {limit_sql}
             """,
-            [*parameters, RESULT_LIMIT],
+            query_parameters,
         ).fetchall()
         return [tuple(row) for row in rows]
 
@@ -410,31 +435,6 @@ def _multiply_cardinalities(cardinalities: dict[str, int]) -> int:
     for value in cardinalities.values():
         product *= max(0, int(value))
     return product
-
-
-def _apply_pivot_row_limit(rows: list[list[Any]]) -> tuple[list[list[Any]], str | None]:
-    max_rows = _get_pivot_max_rows()
-    data_rows = [row for row in rows if not _is_total_row(row)]
-    summary_rows = [row for row in rows if _is_total_row(row)]
-    total_data_rows = len(data_rows)
-
-    if total_data_rows <= max_rows:
-        return rows, None
-
-    limited_rows = data_rows[:max_rows] + summary_rows
-    return (
-        limited_rows,
-        f"Showing first {max_rows} of {total_data_rows} rows",
-    )
-
-
-def _get_pivot_max_rows() -> int:
-    settings = get_application_settings().get("settings", {})
-    value = settings.get("pivot_max_rows", DEFAULT_PIVOT_MAX_ROWS)
-    try:
-        return min(300, max(10, int(value)))
-    except (TypeError, ValueError):
-        return DEFAULT_PIVOT_MAX_ROWS
 
 
 def _is_total_row(row: list[Any]) -> bool:
@@ -538,7 +538,7 @@ def _query_row_totals(
 ) -> dict[tuple[Any, ...], list[Any]]:
     select_parts = [*[quote_identifier(field_name) for field_name in row_field_names], *metric_select_parts]
     group_by_parts = [quote_identifier(field_name) for field_name in row_field_names]
-    query = _build_query(storage_info, select_parts, group_by_parts, where_sql)
+    query = _build_query(storage_info, select_parts, group_by_parts, where_sql, limit=None)
 
     for connection in get_connection():
         rows = connection.execute(query, parameters).fetchall()
@@ -559,7 +559,7 @@ def _query_column_totals(
 ) -> dict[tuple[Any, ...], list[Any]]:
     select_parts = [*[quote_identifier(column_name) for column_name in column_names], *metric_select_parts]
     group_by_parts = [quote_identifier(column_name) for column_name in column_names]
-    query = _build_query(storage_info, select_parts, group_by_parts, where_sql)
+    query = _build_query(storage_info, select_parts, group_by_parts, where_sql, limit=None)
 
     for connection in get_connection():
         rows = connection.execute(query, parameters).fetchall()
@@ -574,7 +574,7 @@ def _query_grand_totals(
     where_sql: str,
     parameters: list[Any],
 ) -> list[Any]:
-    query = _build_query(storage_info, metric_select_parts, [], where_sql)
+    query = _build_query(storage_info, metric_select_parts, [], where_sql, limit=None)
 
     for connection in get_connection():
         row = connection.execute(query, parameters).fetchone()
@@ -616,6 +616,167 @@ def _total_row_label(value_headers: list[str]) -> str:
     if all(metric_label in {"Sum", "Count"} for metric_label in metric_labels):
         return "Total"
     return "Grand Total"
+
+
+def _validate_excel_limits(pivot_result: dict[str, Any]) -> None:
+    header_depth = _excel_header_depth(pivot_result)
+    worksheet_rows = header_depth + len(pivot_result["rows"])
+    worksheet_columns = len(pivot_result["headers"])
+    if worksheet_rows > EXCEL_MAX_ROWS or worksheet_columns > EXCEL_MAX_COLUMNS:
+        raise HTTPException(status_code=400, detail="Pivot result exceeds Excel worksheet limits.")
+
+
+def _build_pivot_workbook(pivot_result: dict[str, Any]) -> Workbook:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "Pivot"
+
+    header_rows = _excel_header_rows(pivot_result)
+    for row_index, row in enumerate(header_rows, start=1):
+        for column_index, value in enumerate(row, start=1):
+            cell = worksheet.cell(row=row_index, column=column_index, value=value)
+            _style_header_cell(cell)
+
+    _merge_excel_headers(worksheet, pivot_result, header_rows)
+
+    body_start_row = len(header_rows) + 1
+    for row_offset, row in enumerate(pivot_result["rows"], start=0):
+        excel_row = body_start_row + row_offset
+        is_total_row = _is_total_row(row)
+        for column_index, value in enumerate(row, start=1):
+            cell = worksheet.cell(row=excel_row, column=column_index, value=value)
+            if is_total_row or _is_total_header(pivot_result["headers"][column_index - 1]):
+                _style_total_cell(cell)
+
+    for column_index, column_cells in enumerate(worksheet.columns, start=1):
+        max_length = max(len(str(cell.value or "")) for cell in column_cells[:100])
+        worksheet.column_dimensions[get_column_letter(column_index)].width = min(max(max_length + 2, 12), 32)
+
+    worksheet.freeze_panes = worksheet.cell(row=body_start_row, column=2)
+    return workbook
+
+
+def _excel_header_depth(pivot_result: dict[str, Any]) -> int:
+    pivot_metadata = pivot_result.get("pivot")
+    if not pivot_metadata or not pivot_metadata.get("columnFields") or not pivot_metadata.get("columnValues"):
+        return 1
+
+    value_headers = pivot_metadata.get("valueFields") or ["Value"]
+    return len(pivot_metadata["columnFields"]) + (1 if len(value_headers) > 1 else 0)
+
+
+def _excel_header_rows(pivot_result: dict[str, Any]) -> list[list[Any]]:
+    header_depth = _excel_header_depth(pivot_result)
+    headers = pivot_result["headers"]
+    pivot_metadata = pivot_result.get("pivot")
+    if not pivot_metadata or not pivot_metadata.get("columnFields") or not pivot_metadata.get("columnValues"):
+        return [headers]
+
+    row_fields = pivot_metadata["rowFields"]
+    column_values = pivot_metadata["columnValues"]
+    value_headers = pivot_metadata.get("valueFields") or ["Value"]
+    value_count = len(value_headers)
+    show_metric_level = value_count > 1
+    rows = [["" for _ in headers] for _ in range(header_depth)]
+
+    for index, row_field in enumerate(row_fields):
+        rows[0][index] = row_field
+
+    for level in range(len(pivot_metadata["columnFields"])):
+        for combination_index, column_value in enumerate(column_values):
+            rows[level][len(row_fields) + combination_index * value_count] = _excel_header_value(column_value[level])
+
+    if show_metric_level:
+        metric_row = header_depth - 1
+        for combination_index, _ in enumerate(column_values):
+            for value_index, value_header in enumerate(value_headers):
+                rows[metric_row][len(row_fields) + combination_index * value_count + value_index] = _metric_label(value_header)
+
+    total_start = len(row_fields) + len(column_values) * value_count
+    total_headers = headers[total_start:]
+    if total_headers:
+        rows[0][total_start] = "Total" if show_metric_level else total_headers[0]
+        if show_metric_level:
+            for index, total_header in enumerate(total_headers):
+                rows[-1][total_start + index] = _metric_label(total_header)
+
+    return rows
+
+
+def _merge_excel_headers(worksheet: Any, pivot_result: dict[str, Any], header_rows: list[list[Any]]) -> None:
+    pivot_metadata = pivot_result.get("pivot")
+    if not pivot_metadata or not pivot_metadata.get("columnFields") or not pivot_metadata.get("columnValues"):
+        return
+
+    row_field_count = len(pivot_metadata["rowFields"])
+    column_values = pivot_metadata["columnValues"]
+    value_headers = pivot_metadata.get("valueFields") or ["Value"]
+    value_count = len(value_headers)
+    header_depth = len(header_rows)
+    show_metric_level = value_count > 1
+
+    for index in range(row_field_count):
+        if header_depth > 1:
+            worksheet.merge_cells(start_row=1, start_column=index + 1, end_row=header_depth, end_column=index + 1)
+
+    for level in range(len(pivot_metadata["columnFields"])):
+        group_start = 0
+        while group_start < len(column_values):
+            group_end = group_start + 1
+            while group_end < len(column_values) and _same_header_prefix(column_values[group_start], column_values[group_end], level):
+                group_end += 1
+
+            start_column = row_field_count + group_start * value_count + 1
+            end_column = row_field_count + group_end * value_count
+            if end_column > start_column:
+                worksheet.merge_cells(start_row=level + 1, start_column=start_column, end_row=level + 1, end_column=end_column)
+            group_start = group_end
+
+    total_start = row_field_count + len(column_values) * value_count + 1
+    total_headers = pivot_result["headers"][total_start - 1 :]
+    if total_headers:
+        if show_metric_level and header_depth > 1:
+            end_column = total_start + len(total_headers) - 1
+            if end_column > total_start:
+                worksheet.merge_cells(start_row=1, start_column=total_start, end_row=header_depth - 1, end_column=end_column)
+            else:
+                worksheet.merge_cells(start_row=1, start_column=total_start, end_row=header_depth - 1, end_column=total_start)
+        elif header_depth > 1:
+            worksheet.merge_cells(start_row=1, start_column=total_start, end_row=header_depth, end_column=total_start)
+
+
+def _same_header_prefix(left: list[Any], right: list[Any], level: int) -> bool:
+    return all(_excel_header_value(left[index]) == _excel_header_value(right[index]) for index in range(level + 1))
+
+
+def _excel_header_value(value: Any) -> str:
+    serialised_value = _serialise_value(value)
+    if serialised_value is None:
+        return "(Blank)"
+    text = str(serialised_value).strip()
+    return text if text else "(Blank)"
+
+
+def _style_header_cell(cell: Any) -> None:
+    cell.font = Font(bold=True)
+    cell.fill = PatternFill(fill_type="solid", fgColor=HEADER_FILL)
+
+
+def _style_total_cell(cell: Any) -> None:
+    cell.font = Font(bold=True)
+    cell.fill = PatternFill(fill_type="solid", fgColor=TOTAL_FILL)
+
+
+def _is_total_header(header: str) -> bool:
+    return header == "Total" or header.startswith("Total ") or header.startswith("Grand ")
+
+
+def _build_export_filename(project_name: str) -> str:
+    from datetime import datetime
+
+    safe_project_name = re.sub(r"[^A-Za-z0-9_-]+", "_", project_name).strip("_") or "Project"
+    timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+    return f"pivot_{safe_project_name}_{timestamp}.xlsx"
 
 
 def _serialise_value(value: Any) -> str | int | float | bool | None:

@@ -1,8 +1,11 @@
 import logging
+from io import BytesIO
+from urllib.parse import quote
 
 from pydantic import BaseModel, Field
-from fastapi import FastAPI, File, Form, UploadFile
+from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 
 from app.core.config import settings
 from app.db.duckdb import close_connection, get_duckdb_diagnostics, log_duckdb_diagnostics
@@ -33,7 +36,7 @@ from app.services.project_storage import (
     list_project_records,
     update_project_record,
 )
-from app.services.pivot_service import estimate_pivot, execute_pivot
+from app.services.pivot_service import build_pivot_export, estimate_pivot, execute_pivot
 
 
 class ProjectCreateRequest(BaseModel):
@@ -63,6 +66,7 @@ def create_app() -> FastAPI:
         allow_credentials=True,
         allow_methods=["*"],
         allow_headers=["*"],
+        expose_headers=["Content-Disposition"],
     )
 
     @app.get("/health", tags=["system"])
@@ -177,6 +181,24 @@ def create_app() -> FastAPI:
     @app.post("/datasets/{dataset_id}/pivot/estimate", tags=["datasets"])
     def dataset_pivot_estimate(dataset_id: str, payload: dict) -> dict:
         return estimate_pivot(dataset_id, payload)
+
+    @app.post("/pivot/export", tags=["pivot"])
+    def pivot_export(payload: dict) -> StreamingResponse:
+        try:
+            content, filename = build_pivot_export(payload)
+        except HTTPException:
+            raise
+        except Exception as exc:
+            logging.exception("Pivot export failed.")
+            raise HTTPException(status_code=500, detail="Pivot export could not be created.") from exc
+        quoted_filename = quote(filename)
+        return StreamingResponse(
+            BytesIO(content),
+            media_type="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            headers={
+                "Content-Disposition": f"attachment; filename={filename}; filename*=UTF-8''{quoted_filename}",
+            },
+        )
 
     @app.post("/datasets/{dataset_id}/charts", tags=["datasets"])
     def dataset_chart(dataset_id: str, payload: dict) -> dict:

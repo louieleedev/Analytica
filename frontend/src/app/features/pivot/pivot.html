@@ -112,6 +112,15 @@
             <mat-icon>save</mat-icon>
             Save Template
           </button>
+          <button
+            mat-stroked-button
+            type="button"
+            [disabled]="isProcessing || isExporting || !canExportPivot"
+            (click)="exportPivot()"
+          >
+            <mat-icon>download</mat-icon>
+            Export Excel
+          </button>
           <button mat-flat-button type="button" [disabled]="isProcessing || !canApplyPivot" (click)="applyPivot()">
             <mat-icon>play_arrow</mat-icon>
             Apply Pivot
@@ -238,7 +247,7 @@
         </div>
         @if (hasPendingChanges && pivotResult) {
           <div class="pivot-stale-message">
-            Pivot configuration changed. Apply Pivot to refresh results.
+            {{ pivotStaleMessage }}
           </div>
         }
         @if (pivotResult && displayedPivotRows.length > 0 && canRenderPivotResult) {
