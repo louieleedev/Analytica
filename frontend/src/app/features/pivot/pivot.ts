@@ -1470,13 +1470,6 @@ export class Pivot {
 
     this.isExporting = true;
     this.valuesHelperMessage = '';
-    const fallbackFilename = this.buildFallbackExportFilename(activeProject.name);
-    const fileHandle = await this.pickExcelSaveHandle(fallbackFilename);
-    if (fileHandle === undefined) {
-      this.isExporting = false;
-      return;
-    }
-
     const dialogRef = this.dialog.open(PivotProcessingDialog, {
       disableClose: true,
       width: '420px',
@@ -1485,6 +1478,14 @@ export class Pivot {
         lines: ['Generating Pivot export...', 'Please wait.'],
       },
     });
+    const fallbackFilename = this.buildFallbackExportFilename(activeProject.name);
+    const fileHandle = await this.pickExcelSaveHandle(fallbackFilename);
+    if (fileHandle === undefined) {
+      this.isExporting = false;
+      dialogRef.close();
+      return;
+    }
+
     const request = this.createPivotRequest();
 
     try {
@@ -1575,10 +1576,12 @@ export class Pivot {
         ],
       });
     } catch (error) {
-      if ((error as DOMException).name !== 'AbortError') {
-        this.showExportError(`Reason: ${this.readExportFailureReason(error)}`);
+      if ((error as DOMException).name === 'AbortError') {
+        return undefined;
       }
-      return undefined;
+
+      console.warn('File System Access API unavailable. Falling back to browser download.', error);
+      return null;
     }
   }
 
