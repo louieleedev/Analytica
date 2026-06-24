@@ -1,4 +1,5 @@
 import { Component, Injectable, effect, inject, signal } from '@angular/core';
+import { HttpErrorResponse } from '@angular/common/http';
 import { FormsModule } from '@angular/forms';
 import {
   CdkDragDrop,
@@ -14,6 +15,7 @@ import { MatInputModule } from '@angular/material/input';
 import { MatProgressSpinnerModule } from '@angular/material/progress-spinner';
 import { MatSelectModule } from '@angular/material/select';
 import { MatSnackBar, MatSnackBarModule } from '@angular/material/snack-bar';
+import { firstValueFrom } from 'rxjs';
 
 import { ImportApi } from '../../core/import-api';
 import {
@@ -151,19 +153,44 @@ class PivotTemplateStore {
   imports: [MatDialogModule, MatProgressSpinnerModule],
   template: `
     <div class="pivot-processing-dialog">
-      <h2 mat-dialog-title>Calculating Pivot</h2>
+      <h2 mat-dialog-title>{{ title }}</h2>
       <mat-dialog-content>
         <mat-spinner diameter="52"></mat-spinner>
         <div>
-          <p>Preparing aggregated dataset...</p>
-          <p>Calculating results...</p>
-          <p>Rendering pivot table...</p>
+          @for (line of lines; track line) {
+            <p>{{ line }}</p>
+          }
         </div>
       </mat-dialog-content>
     </div>
   `,
 })
-export class PivotProcessingDialog {}
+export class PivotProcessingDialog {
+  protected readonly data = inject<{ title?: string; lines?: string[] } | null>(MAT_DIALOG_DATA, { optional: true });
+  protected readonly title = this.data?.title ?? 'Calculating Pivot';
+  protected readonly lines = this.data?.lines ?? [
+    'Preparing aggregated dataset...',
+    'Calculating results...',
+    'Rendering pivot table...',
+  ];
+}
+
+@Component({
+  selector: 'app-pivot-export-error-dialog',
+  imports: [MatButtonModule, MatDialogModule],
+  template: `
+    <h2 mat-dialog-title>Excel export failed.</h2>
+    <mat-dialog-content>
+      <p>{{ data.message }}</p>
+    </mat-dialog-content>
+    <mat-dialog-actions align="end">
+      <button mat-flat-button mat-dialog-close>Close</button>
+    </mat-dialog-actions>
+  `,
+})
+export class PivotExportErrorDialog {
+  protected readonly data = inject<{ message: string }>(MAT_DIALOG_DATA);
+}
 
 @Component({
   selector: 'app-save-pivot-template-dialog',
@@ -1434,7 +1461,7 @@ export class Pivot {
     });
   }
 
-  protected exportPivot(): void {
+  protected async exportPivot(): Promise<void> {
     const activeProject = this.projectSelection.activeProject();
     const datasetId = activeProject?.datasetMetadata?.datasetId;
     if (this.isProcessing || this.isExporting || !datasetId || !this.canExportPivot) {
@@ -1443,29 +1470,49 @@ export class Pivot {
 
     this.isExporting = true;
     this.valuesHelperMessage = '';
-    const request = this.createPivotRequest();
-    this.importApi
-      .exportPivot({
-        ...request,
-        datasetId,
-        projectName: activeProject.name,
-      })
-      .subscribe({
-        next: (response) => {
-          this.isExporting = false;
-          const blob = response.body;
-          if (!blob) {
-            this.valuesHelperMessage = 'Pivot export did not return a file.';
-            return;
-          }
+    const fallbackFilename = this.buildFallbackExportFilename(activeProject.name);
+    const fileHandle = await this.pickExcelSaveHandle(fallbackFilename);
+    if (fileHandle === undefined) {
+      this.isExporting = false;
+      return;
+    }
 
-          this.downloadBlob(blob, this.getExportFilename(response.headers.get('content-disposition'), activeProject.name));
-        },
-        error: (error) => {
-          this.isExporting = false;
-          this.valuesHelperMessage = error?.error?.detail ?? 'Pivot export could not be created.';
-        },
-      });
+    const dialogRef = this.dialog.open(PivotProcessingDialog, {
+      disableClose: true,
+      width: '420px',
+      data: {
+        title: 'Preparing Excel Export',
+        lines: ['Generating Pivot export...', 'Please wait.'],
+      },
+    });
+    const request = this.createPivotRequest();
+
+    try {
+      const response = await firstValueFrom(
+        this.importApi.exportPivot({
+          ...request,
+          datasetId,
+          projectName: activeProject.name,
+        }),
+      );
+      const blob = response.body;
+      if (!blob) {
+        throw new Error('No file was returned.');
+      }
+
+      const filename = this.getExportFilename(response.headers.get('content-disposition'), activeProject.name);
+      await this.saveExportBlob(blob, filename, fileHandle);
+      this.snackBar.open('Excel export completed.', 'Close', { duration: 2400 });
+    } catch (error) {
+      const message =
+        error instanceof HttpErrorResponse
+          ? await this.readExportErrorMessage(error)
+          : `Reason: ${this.readExportFailureReason(error)}`;
+      this.showExportError(message);
+    } finally {
+      this.isExporting = false;
+      dialogRef.close();
+    }
   }
 
   private executePivotRequest(datasetId: string, request: PivotRequest): void {
@@ -1504,6 +1551,85 @@ export class Pivot {
     link.click();
     document.body.removeChild(link);
     window.URL.revokeObjectURL(url);
+  }
+
+  private async pickExcelSaveHandle(filename: string): Promise<FileSystemFileHandle | null | undefined> {
+    const savePicker = (window as unknown as {
+      showSaveFilePicker?: (options: {
+        suggestedName: string;
+        types: { description: string; accept: Record<string, string[]> }[];
+      }) => Promise<FileSystemFileHandle>;
+    }).showSaveFilePicker;
+    if (!savePicker) {
+      return null;
+    }
+
+    try {
+      return await savePicker.call(window, {
+        suggestedName: filename,
+        types: [
+          {
+            description: 'Excel workbook',
+            accept: { 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet': ['.xlsx'] },
+          },
+        ],
+      });
+    } catch (error) {
+      if ((error as DOMException).name !== 'AbortError') {
+        this.showExportError(`Reason: ${this.readExportFailureReason(error)}`);
+      }
+      return undefined;
+    }
+  }
+
+  private async saveExportBlob(
+    blob: Blob,
+    filename: string,
+    fileHandle: FileSystemFileHandle | null | undefined,
+  ): Promise<void> {
+    if (!fileHandle) {
+      this.downloadBlob(blob, filename);
+      return;
+    }
+
+    const writable = await fileHandle.createWritable();
+    try {
+      await writable.write(blob);
+      await writable.close();
+    } catch (error) {
+      await writable.abort().catch(() => undefined);
+      throw error;
+    }
+  }
+
+  private showExportError(message: string): void {
+    this.dialog.open(PivotExportErrorDialog, {
+      width: '420px',
+      data: { message },
+    });
+  }
+
+  private async readExportErrorMessage(error: HttpErrorResponse): Promise<string> {
+    const fallback = 'Please try again.';
+    if (error.error instanceof Blob) {
+      try {
+        const text = await error.error.text();
+        const parsed = JSON.parse(text) as { detail?: string };
+        return parsed.detail || fallback;
+      } catch {
+        return fallback;
+      }
+    }
+
+    return error.error?.detail || fallback;
+  }
+
+  private readExportFailureReason(error: unknown): string {
+    if (error instanceof Error && error.message) {
+      return error.message;
+    }
+
+    return 'Please try again.';
   }
 
   private getExportFilename(contentDisposition: string | null, projectName: string): string {
